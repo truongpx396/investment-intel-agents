@@ -34,8 +34,12 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 - **Message queue**: NATS JetStream (signal event fanout, notification queue)
 - **Frontend**: ReactJS 19 + TailwindCSS v4 + TanStack Router + TanStack Query
 - **LLM (digest summarisation)**: Anthropic Claude (via GoClaw provider config, claude-3-5-haiku)
-- **Crypto news API**: TBD at sprint planning (candidates: CryptoPanic, Messari, CoinGecko News)
-- **Market data feed**: TBD at sprint planning (candidates: CoinGecko, Binance WebSocket, CryptoCompare)
+- **Crypto news API**: CryptoPanic free tier (50 req/day per token; DuckDuckGo fallback on quota
+  exhaustion). Abstracted behind `NewsProvider` interface in `ai-service/src/news/`.
+- **Market data feed**: CoinGecko Free API (no key required, ≤30 req/min) for spot price and
+  percentage-change signals; CryptoCompare `histominute` endpoint (free tier, 100k req/month)
+  for intraday OHLCV data required by the 14-period RSI calculation. Both abstracted behind
+  `pkg/marketdata.Provider` interface.
 - **Logging**: zerolog (Go), structlog (Python)
 - **Monitoring**: Prometheus + Grafana
 
@@ -271,8 +275,9 @@ Key findings to carry into implementation:
 ### Supabase Auth
 - Supabase Auth handles JWT issuance; Go backend validates JWTs using Supabase public key
 - Row Level Security (RLS) on all tables ensures users can only read/write their own rows
-- Supabase Dashboard doubles as admin panel for POC (user management, data inspection)
 - Email verification and password reset are built into Supabase Auth — no custom flow required
+  (FR-020 is satisfied by delegating these flows to Supabase; `internal/auth/` only needs JWT
+  validation middleware and user-context injection)
 
 ### Stripe
 - POC uses a single subscription product with one price (monthly flat fee)

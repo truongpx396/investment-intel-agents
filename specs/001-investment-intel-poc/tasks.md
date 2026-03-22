@@ -26,6 +26,9 @@ feature work begins. No user story can be built without this foundation.
 - [ ] T008 [P] Define TailwindCSS design tokens (colours, spacing, typography) and create shared component primitives: `Button`, `Input`, `Card`, `Badge`, `Spinner`, `EmptyState`, `ErrorMessage`
 - [ ] T009 [P] Configure Traefik static config: TLS termination (Cloudflare origin cert), routing rules for `api.`, `app.`, `goclaw.` subdomains, rate-limit middleware
 - [ ] T010 [P] Configure GoClaw: `.env` with `GOCLAW_ANTHROPIC_API_KEY`, `GOCLAW_TELEGRAM_BOT_TOKEN`, `GOCLAW_DB_*`; `docker-compose.goclaw.yml`; verify `GET /health` returns 200
+- [ ] T010a [P] Create `specs/001-investment-intel-poc/contracts/rest-api.md`: draft endpoint signatures and response schemas for auth, strategies, alerts, watchlist, billing, and internal service-to-service routes; prerequisite for all contract tests in Phases 3–8
+- [ ] T010b [P] Create `specs/001-investment-intel-poc/contracts/nats-events.md`: define `signal.triggered` and `digest.requested` NATS JetStream message schemas (subject, payload fields, ordering guarantees); prerequisite for T041 and T042
+- [ ] T010c [P] Create `specs/001-investment-intel-poc/research.md` with initial structure: GoClaw integration notes, market data feed evaluation, crypto news API evaluation, performance test results placeholder (filled during Phase 10)
 
 **Checkpoint**: All services start locally via `docker compose up`. CI runs and is green on an empty test suite.
 
@@ -38,7 +41,7 @@ feature work begins. No user story can be built without this foundation.
 **⚠️ CRITICAL**: Stories US1–US5 and billing MUST NOT be started until this phase passes its checkpoint.
 
 - [ ] T011 Write contract tests for `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/forgot-password`, `POST /auth/reset-password` in `backend/tests/contract/auth_test.go`
-- [ ] T012 Implement Supabase Auth integration in `backend/internal/auth/`: JWT validation middleware using Supabase public key; user context injection; email verification + password-reset flows delegated to Supabase
+- [ ] T012 Implement Supabase Auth integration in `backend/internal/auth/`: JWT validation middleware using Supabase public key; user context injection; email verification + password-reset flows are **delegated to Supabase Auth** — no custom implementation required (FR-020 is satisfied by Supabase's built-in flows)
 - [ ] T013 [P] Create `app_users` migration (`002_users.sql`): `id`, `email`, `timezone` (default `UTC`), `telegram_chat_id`, `telegram_linked_at`, `subscription_status`, `stripe_customer_id`, `created_at`
 - [ ] T014 [P] Implement NATS JetStream connection helper in `backend/pkg/nats/`: publisher, durable consumer setup, reconnect logic; integration test with local NATS
 - [ ] T015 [P] Bootstrap Stripe integration in `backend/internal/billing/`: Stripe Go SDK init, webhook signature validation middleware, stub handlers for `customer.subscription.created`, `customer.subscription.deleted`, `invoice.payment_failed`; contract tests for `POST /billing/webhook`
@@ -116,10 +119,12 @@ as Active. Edit threshold → verify persisted. Delete → gone. No notification
 
 - [ ] T038 [US2] Migration `005_alerts.sql`: `app_alerts` (`id`, `strategy_id`, `user_id`, `signal_rule_id`, `asset`, `trigger_value`, `threshold`, `triggered_at`, `telegram_status` enum Pending/Sent/Failed, `retry_count`)
 - [ ] T039 [US2] Implement market data adapter interface `pkg/marketdata/provider.go` and CoinGecko implementation `pkg/marketdata/coingecko.go`; unit tests with mocked HTTP responses
+- [ ] T039a [P] [US2] Implement CryptoCompare `histominute` adapter in `pkg/marketdata/cryptocompare.go` for intraday OHLCV data required by the 14-period RSI calculation; unit tests with mocked HTTP; wire as the data source for `internal/signals/rsi.go`; CoinGecko adapter handles spot price + % change signals only
 - [ ] T040 [P] [US2] Implement RSI calculator in `backend/internal/signals/rsi.go` (14-period, from OHLC slice); unit tests covering overbought (>70), oversold (<30), neutral
 - [ ] T041 [US2] Implement signal evaluation loop in `backend/internal/signals/poller.go`: 30 s Go ticker, single-pass evaluation across all active strategies per tick, publish `signal.triggered` to NATS on match
 - [ ] T042 [US2] Implement NATS consumer + alert dispatcher in `backend/internal/alerts/dispatcher.go`: consume `signal.triggered`, persist Alert record, call `telegram.bot.SendMessage`, update `telegram_status`; 3× retry with exponential back-off on failure; surface `telegram_status=Failed` for web-app indicator
 - [ ] T043 [P] [US2] Integration test: end-to-end signal trigger → NATS → alert persist → Telegram send (with mocked Telegram Bot API) in `backend/tests/integration/signal_notification_test.go`
+- [ ] T043a [P] [US2] React — Delivery-failure indicator on strategy dashboard card (`/dashboard`): when any alert for a strategy has `telegram_status=Failed`, show a red badge on the card; clicking it navigates to alert history filtered by that strategy (per FR-010); Vitest unit test for the badge component
 
 **Checkpoint**: Signal fires → Telegram notification < 60 s. Paused strategy = silent. Two-user isolation verified. CI green. ≥ 95% coverage on `internal/signals/` and `internal/alerts/`.
 
@@ -163,10 +168,13 @@ as Active. Edit threshold → verify persisted. Delete → gone. No notification
 - [ ] T052 [P] [US3] Implement watchlist CRUD handlers in `backend/internal/watchlist/handler.go`; contract: add/remove/list entries; RLS scoped to user
 - [ ] T053 [P] [US3] React — Watchlist page (`/watchlist`): grid of curated projects with add/remove toggle, loading, empty-state ("add projects to receive your daily digest"), error state
 - [ ] T054 [US3] Implement CryptoPanic news adapter in `ai-service/src/news/cryptopanic.py`: fetch news by currency slug, parse items (title, url, published_at), DuckDuckGo fallback on quota exceeded; expose `GET /news/{project_slug}` endpoint
+- [ ] T054a [P] [US3] Define abstract `NewsProvider` interface in `ai-service/src/news/provider.py`: `fetch_news(project_slug: str) -> list[NewsItem]` with `NewsItem` dataclass (title, url, published_at, source); `CryptoPanicAdapter` in T054 MUST implement this interface; unit tests asserting interface contract; interface contract also documented in `contracts/rest-api.md`
 - [ ] T055 [US3] Create GoClaw digest agent in `goclaw/agents/digest-agent/`: `AGENT.md` (persona: "Investment Intel Digest Bot"; instructions to fetch each user's watchlist via backend API, call news endpoint per project, summarise with LLM, send via `message` tool); `HEARTBEAT.md` (confirm digest sent)
-- [ ] T056 [P] [US3] Create GoClaw `crypto-digest` skill in `goclaw/agents/digest-agent/skills/crypto-digest.md`: skill steps — (1) `GET /watchlist` for user, (2) `web_fetch` CryptoPanic per project, (3) LLM summarise (claude-3-5-haiku, ≤ 200 tokens/project), (4) `message` to Telegram chat ID
+- [ ] T056 [P] [US3] Create GoClaw `crypto-digest` skill in `goclaw/agents/digest-agent/skills/crypto-digest.md`: skill steps — (1) `GET /watchlist` for user via internal service token (see T057a), (2) `web_fetch` CryptoPanic per project, (3) LLM summarise (claude-3-5-haiku, ≤ 200 tokens/project), (4) `message` to Telegram chat ID; skill MUST explicitly handle the no-news case: if `web_fetch` returns zero items for a project, insert a section reading "No significant updates in the last 24 hours" (per FR-015)
 - [ ] T057 [US3] Configure GoClaw cron: add cron entry in agent config `cron: "30 8 * * *"` (08:30 UTC); verify trigger via GoClaw web dashboard
+- [ ] T057a [P] [US3] Define and implement service-to-service auth for GoClaw → backend API calls: `GOCLAW_INTERNAL_TOKEN` env var; add `/internal/` route prefix in Traefik config validated by a static-bearer middleware (bypasses Supabase JWT); document token scheme in `contracts/rest-api.md`; unit test the middleware
 - [ ] T058 [P] [US3] React — Digest history section on watchlist page: last digest timestamp + status (Sent/Pending/Failed); re-link prompt if Telegram not linked
+- [ ] T058a [P] [US3] React — Timezone selector in `/settings/account`: dropdown of common IANA timezones; persisted to `app_users.timezone` via `PATCH /users/me`; display hint "Your daily digest is scheduled for 09:00 [timezone]"; include UI notice that digest is currently sent at 08:30 UTC (POC limitation — per-timezone scheduling is post-POC)
 - [ ] T059 [US3] Integration test: watchlist CRUD in `backend/tests/integration/watchlist_test.go`; news adapter in `ai-service/tests/integration/test_news_adapter.py`
 
 **Checkpoint**: Watchlist CRUD works. GoClaw digest cron fires at 08:30 UTC and delivers Telegram messages. Empty watchlist = no message. CI green.
@@ -214,6 +222,7 @@ as Active. Edit threshold → verify persisted. Delete → gone. No notification
 - [ ] T076 [P] Verify all API endpoints respond < 200 ms p95 under 50-user simulated load using `k6` (or `hey`); add results to `specs/001-investment-intel-poc/research.md`
 - [ ] T077 [P] Final coverage sweep: assert `go test -cover` ≥ 80% globally; ≥ 95% on `internal/signals/`, `internal/alerts/`, `internal/auth/`, `internal/billing/`; fail CI if thresholds not met
 - [ ] T078 [P] Final lint sweep: `golangci-lint run ./...`, `ruff check .`, `eslint .` — zero warnings; fix all or add justified inline suppressions
+- [ ] T078a [P] Configure Prometheus alert rules in `infra/monitoring/alerts.yaml`: (1) `digest_delivery_failures_total > 0` within 1 h → page operator; (2) `signal_evaluation_cycle_seconds p95 > 25` (>83% of 30 s tick) → warn; (3) `telegram_delivery_latency_seconds p95 > 30` → warn; wire into Grafana alert notification channel
 
 **Checkpoint**: All constitution quality gates pass in CI. Prometheus + Grafana operational. Performance budgets met.
 
@@ -235,16 +244,16 @@ as Active. Edit threshold → verify persisted. Delete → gone. No notification
 
 | Phase | Stories | Tasks | Critical Path |
 |-------|---------|-------|---------------|
-| 1 – Setup | — | T001–T010 | Blocks everything |
+| 1 – Setup | — | T001–T010c | Blocks everything |
 | 2 – Foundation | US0 (auth) | T011–T018 | Blocks US1–US5 |
 | 3 – Strategy Config | US1 (P1) | T019–T027 | MVP gate |
 | 4 – Telegram Linking | US4 (P1) | T028–T034 | Blocks US2 + US3 delivery |
-| 5 – Notifications | US2 (P2) | T035–T043 | Core value delivery |
+| 5 – Notifications | US2 (P2) | T035–T043a | Core value delivery |
 | 6 – Alert History | US5 (P2) | T044–T047 | Pairs with US2 |
 | 7 – Watchlist + Digest | US3 (P3) | T048–T059 | GoClaw + AI layer |
 | 8 – Billing | US0 | T060–T066 | Revenue gate |
 | 9 – Admin | US0 | T067–T070 | Ops tooling |
-| 10 – Quality Gates | — | T071–T078 | Constitution compliance |
+| 10 – Quality Gates | — | T071–T078a | Constitution compliance |
 | 11 – Deploy | — | T079–T083 | POC handoff |
 
-**Total tasks**: 83
+**Total tasks**: 93 (83 original + 10 added by analysis remediation: T010a–T010c, T031a, T039a, T043a, T054a, T057a, T058a, T078a)
