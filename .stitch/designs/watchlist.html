@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Watchlist | Investment Intel</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "outline-variant": "#364770",
+                        "tertiary-container": "#69f6b8",
+                        "on-secondary-fixed-variant": "#6a37d4",
+                        "primary": "#ffb95f",
+                        "on-background": "#dee5ff",
+                        "surface-bright": "#182b52",
+                        "outline": "#6475a1",
+                        "primary-dim": "#f8a010",
+                        "on-tertiary-container": "#005a3c",
+                        "tertiary": "#9bffce",
+                        "surface-container-highest": "#11244c",
+                        "background": "#060e20",
+                        "surface-variant": "#11244c",
+                        "on-surface-variant": "#99aad9",
+                        "on-primary": "#5c3800",
+                        "tertiary-fixed": "#69f6b8",
+                        "secondary-fixed-dim": "#ddcdff",
+                        "on-tertiary": "#006443",
+                        "secondary-fixed": "#e9ddff",
+                        "inverse-surface": "#faf8ff",
+                        "on-tertiary-fixed": "#00452d",
+                        "inverse-primary": "#865400",
+                        "secondary-container": "#4900ad",
+                        "surface-dim": "#060e20",
+                        "error-container": "#85230a",
+                        "error": "#f97758",
+                        "surface-container": "#0a1836",
+                        "inverse-on-surface": "#4d556b",
+                        "error-dim": "#c44f34",
+                        "surface-tint": "#ffb95f",
+                        "primary-fixed": "#f8a010",
+                        "surface": "#060e20",
+                        "on-error-container": "#ff9b82",
+                        "on-tertiary-fixed-variant": "#006544",
+                        "secondary": "#d0bcff",
+                        "on-primary-container": "#472a00",
+                        "surface-container-highest": "#11244c",
+                        "on-secondary": "#4e03b8",
+                        "primary-container": "#f59e0a",
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            background-color: #060e20;
+            color: #dee5ff;
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="font-body antialiased">
+<!-- Top Navigation Shell -->
+<header class="fixed top-0 w-full z-50 bg-slate-950/80 backdrop-blur-md flex justify-between items-center px-6 h-16 border-b border-slate-800 shadow-2xl">
+<div class="flex items-center gap-8">
+<span class="text-xl font-bold text-amber-500 font-headline tracking-tight">Investment Intel</span>
+<nav class="hidden md:flex gap-6 items-center h-full pt-1">
+<a class="text-slate-400 hover:text-amber-400 hover:bg-slate-800/50 transition-colors active:scale-95 duration-150 py-2 px-1" href="#">Market</a>
+<a class="text-slate-400 hover:text-amber-400 hover:bg-slate-800/50 transition-colors active:scale-95 duration-150 py-2 px-1" href="#">Exchange</a>
+<a class="text-amber-500 border-b-2 border-amber-500 pb-1 font-bold" href="#">Watchlist</a>
+<a class="text-slate-400 hover:text-amber-400 hover:bg-slate-800/50 transition-colors active:scale-95 duration-150 py-2 px-1" href="#">Community</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative hidden sm:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">search</span>
+<input class="bg-slate-900 border border-slate-800 rounded-lg pl-9 pr-4 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500 w-64" placeholder="Search markets..." type="text"/>
+</div>
+<button class="text-slate-400 hover:text-amber-400 transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-slate-400 hover:text-amber-400 transition-colors">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</header>
+<!-- Sidebar Navigation Shell -->
+<aside class="fixed left-0 top-0 h-full w-64 z-40 bg-slate-900 border-r border-slate-800 shadow-xl flex flex-col pt-20 pb-6 font-headline antialiased">
+<div class="px-6 mb-8">
+<h2 class="text-lg font-black text-amber-500">Investment Intel</h2>
+<p class="text-xs text-slate-500 font-medium">Pro Trader</p>
+</div>
+<nav class="flex-1 space-y-1 px-2">
+<a class="flex items-center gap-3 text-slate-400 px-4 py-3 hover:bg-slate-800 hover:text-slate-100 transition-all active:translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span>Dashboard</span>
+</a>
+<a class="flex items-center gap-3 text-slate-400 px-4 py-3 hover:bg-slate-800 hover:text-slate-100 transition-all active:translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">insights</span>
+<span>Strategies</span>
+</a>
+<a class="flex items-center gap-3 text-slate-400 px-4 py-3 hover:bg-slate-800 hover:text-slate-100 transition-all active:translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">history</span>
+<span>Alert History</span>
+</a>
+<a class="flex items-center gap-3 bg-amber-500/10 text-amber-500 border-r-4 border-amber-500 px-4 py-3 font-bold active:translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span>Watchlist</span>
+</a>
+<a class="flex items-center gap-3 text-slate-400 px-4 py-3 hover:bg-slate-800 hover:text-slate-100 transition-all active:translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span>Settings</span>
+</a>
+</nav>
+<div class="px-6 mt-auto">
+<div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+<p class="text-xs text-slate-400 mb-2">Portfolio Balance</p>
+<p class="text-lg font-bold text-on-background">$124,592.10</p>
+<div class="flex items-center gap-1 text-emerald-400 text-xs mt-1">
+<span class="material-symbols-outlined text-xs">trending_up</span>
+<span>+12.4% this week</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 pt-24 px-8 pb-12 min-h-screen">
+<!-- Page Header Row -->
+<div class="flex justify-between items-end mb-8">
+<div>
+<h1 class="text-4xl font-bold text-on-background font-headline tracking-tight">Watchlist</h1>
+<p class="text-slate-400 mt-1">Monitor your favorite assets in real-time</p>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex bg-slate-900 p-1 rounded-lg border border-slate-800">
+<button class="p-1.5 rounded-md bg-slate-800 text-amber-500 shadow-sm">
+<span class="material-symbols-outlined block">grid_view</span>
+</button>
+<button class="p-1.5 rounded-md text-slate-500 hover:text-slate-300 transition-colors">
+<span class="material-symbols-outlined block">list</span>
+</button>
+</div>
+<button class="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 px-4 py-2.5 rounded-lg font-bold transition-all active:scale-95 shadow-lg shadow-amber-500/10">
+<span class="material-symbols-outlined">add</span>
+<span>Add Asset</span>
+</button>
+</div>
+</div>
+<!-- Search & Filter Bar -->
+<div class="bg-surface-container border border-slate-800 rounded-2xl p-4 mb-8 flex flex-col md:flex-row gap-4 items-center justify-between">
+<div class="relative w-full md:w-auto md:flex-1 max-w-md">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">search</span>
+<input class="w-full bg-slate-950/50 border border-slate-700/50 rounded-xl pl-12 pr-4 py-2.5 text-sm focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all" placeholder="Search assets..." type="text"/>
+</div>
+<div class="flex flex-wrap gap-2">
+<button class="px-4 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-sm font-medium">All active</button>
+<button class="px-4 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 text-sm font-medium hover:border-slate-700 transition-colors">Top Gainers</button>
+<button class="px-4 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 text-sm font-medium hover:border-slate-700 transition-colors">Top Losers</button>
+<button class="px-4 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 text-sm font-medium hover:border-slate-700 transition-colors">Most Volatile</button>
+</div>
+<div class="flex items-center gap-3 border-l border-slate-800 pl-4 h-10">
+<span class="text-xs text-slate-500 uppercase tracking-wider font-bold">Sort by</span>
+<button class="flex items-center gap-2 text-sm font-medium text-on-background bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
+<span>Market Cap</span>
+<span class="material-symbols-outlined text-sm">expand_more</span>
+</button>
+</div>
+</div>
+<!-- Watchlist Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+<!-- Card 1: BTC -->
+<div class="bg-surface-container-high border border-slate-800 rounded-2xl p-6 hover:border-amber-500/30 transition-all hover:shadow-xl hover:shadow-amber-500/5 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 bg-amber-500/10 rounded-full flex items-center justify-center border border-amber-500/20">
+<span class="material-symbols-outlined text-amber-500">currency_bitcoin</span>
+</div>
+<div>
+<h3 class="font-bold text-lg leading-none">BTC/USDT</h3>
+<span class="text-xs text-slate-500">Bitcoin</span>
+</div>
+</div>
+<span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-full border border-emerald-500/20">+2.4%</span>
+</div>
+<div class="mb-6">
+<p class="text-3xl font-bold font-headline">$68,245.30</p>
+</div>
+<div class="h-16 w-full mb-6">
+<img alt="chart" class="w-full h-full object-cover rounded opacity-80" data-alt="abstract minimalistic ascending green financial line chart glow on dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuALkq0E4h-psPM8JXXCyUrP_BEg1dQzWLSm4Y1HUMP4dYJVeni9a4jp0YcIHMXxpdOmRzrWBgrHQBOgtPv57yUUoPZR5FrfuxyF32sgOfnHNWkfU0FGV8vlp0VV3y8ltynHtBlgkJ_bLOIuYh70Y2X5s744N_gLbPmLD_Cblax6Y5_xjxeTahuitQdXhCot_OAlyZRIHFs7p7NdA58mRpH-GhoYr2kgnqXAaqOz-zUqH12mtAYtuJ_fZoDzko5V1fYGfH1auHFTbz_Q"/>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800 mb-4">
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Vol 24h</p>
+<p class="text-sm font-semibold">$32.1B</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Market Cap</p>
+<p class="text-sm font-semibold">$1.34T</p>
+</div>
+</div>
+<a class="flex items-center justify-center gap-2 text-amber-500 font-bold text-sm py-2 bg-amber-500/5 rounded-lg group-hover:bg-amber-500 group-hover:text-slate-950 transition-all" href="#">
+                    View Details
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</a>
+</div>
+<!-- Card 2: ETH -->
+<div class="bg-surface-container-high border border-slate-800 rounded-2xl p-6 hover:border-amber-500/30 transition-all hover:shadow-xl hover:shadow-amber-500/5 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 bg-purple-500/10 rounded-full flex items-center justify-center border border-purple-500/20">
+<span class="material-symbols-outlined text-purple-400">eco</span>
+</div>
+<div>
+<h3 class="font-bold text-lg leading-none">ETH/USDT</h3>
+<span class="text-xs text-slate-500">Ethereum</span>
+</div>
+</div>
+<span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-full border border-emerald-500/20">+1.8%</span>
+</div>
+<div class="mb-6">
+<p class="text-3xl font-bold font-headline">$3,842.15</p>
+</div>
+<div class="h-16 w-full mb-6">
+<img alt="chart" class="w-full h-full object-cover rounded opacity-80" data-alt="gentle rising emerald green data sparkline on deep navy grid textured background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBIZvo3Pb8tNosCa4AeP8aoN9vok0SJJ8o2cslYXC_MydCXYWAoRtXswDUsRXz8cSc0xHM_mDfq2w5kANKQIA1BIHuckMwP_vI8AQqvOiOBMXa0r-rrrVUp1r395UAmV8wmaV9BdgKBpXCcm5CAhmOJJN053ON5R0tKy6-8OrLLEkHZIjipQxrBgHJSWGO4AAW4GdgB06gzMevinTQdZrnv9yuvm4g_ACCGEztDwXUVw7keJmONzQeI6pndO04-Q6RahOetqESYVBfX"/>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800 mb-4">
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Vol 24h</p>
+<p class="text-sm font-semibold">$18.5B</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Market Cap</p>
+<p class="text-sm font-semibold">$462B</p>
+</div>
+</div>
+<a class="flex items-center justify-center gap-2 text-amber-500 font-bold text-sm py-2 bg-amber-500/5 rounded-lg group-hover:bg-amber-500 group-hover:text-slate-950 transition-all" href="#">
+                    View Details
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</a>
+</div>
+<!-- Card 3: SOL -->
+<div class="bg-surface-container-high border border-slate-800 rounded-2xl p-6 hover:border-amber-500/30 transition-all hover:shadow-xl hover:shadow-amber-500/5 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 bg-cyan-500/10 rounded-full flex items-center justify-center border border-cyan-500/20">
+<span class="material-symbols-outlined text-cyan-400">toll</span>
+</div>
+<div>
+<h3 class="font-bold text-lg leading-none">SOL/USDT</h3>
+<span class="text-xs text-slate-500">Solana</span>
+</div>
+</div>
+<span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-full border border-emerald-500/20">+6.2%</span>
+</div>
+<div class="mb-6">
+<p class="text-3xl font-bold font-headline">$142.87</p>
+</div>
+<div class="h-16 w-full mb-6">
+<img alt="chart" class="w-full h-full object-cover rounded opacity-80" data-alt="sharp bullish green price trajectory line against a clean dark minimalist background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCOJynLWw23WSzLmCpfutLjZIAqu08gL3JRx4mfUtD13LbyG8jmAhuwBQ95Ak_jVPkiA7K5IsxYOxqhrVLEAI3vIy4Rv5SQW8O2PLrNDC6NnPHbr6wAPU6ccgLvSO0TAiQKHcVwAVdx5GnsKNdVUrteargWjBN5GvrpOoHMy_w8fg3GaTp8EGb7jJZ5Ugo8cg3EMO6E1peE_z5ZHnxqF8UZfSAn0Z1BJqFr-x-R83YgYQeADuRRNXX8ih7QL_ULp5WVBm8uLPBcqilE"/>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800 mb-4">
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Vol 24h</p>
+<p class="text-sm font-semibold">$4.2B</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Market Cap</p>
+<p class="text-sm font-semibold">$62.8B</p>
+</div>
+</div>
+<a class="flex items-center justify-center gap-2 text-amber-500 font-bold text-sm py-2 bg-amber-500/5 rounded-lg group-hover:bg-amber-500 group-hover:text-slate-950 transition-all" href="#">
+                    View Details
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</a>
+</div>
+<!-- Card 4: AVAX -->
+<div class="bg-surface-container-high border border-slate-800 rounded-2xl p-6 hover:border-amber-500/30 transition-all hover:shadow-xl hover:shadow-amber-500/5 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 bg-red-500/10 rounded-full flex items-center justify-center border border-red-500/20">
+<span class="material-symbols-outlined text-red-400">adjust</span>
+</div>
+<div>
+<h3 class="font-bold text-lg leading-none">AVAX/USDT</h3>
+<span class="text-xs text-slate-500">Avalanche</span>
+</div>
+</div>
+<span class="px-2.5 py-1 bg-red-500/10 text-red-400 text-xs font-bold rounded-full border border-red-500/20">-1.3%</span>
+</div>
+<div class="mb-6">
+<p class="text-3xl font-bold font-headline">$38.45</p>
+</div>
+<div class="h-16 w-full mb-6">
+<img alt="chart" class="w-full h-full object-cover rounded opacity-80" data-alt="subtle downward red market trend line on dark slate abstract surface" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA2wfmYSKdlGW-IW5Y28pQ8ktZR3ZRpsWJy76XIeHZ0cyQ3gY5wmNmgg-pbY-acIVRjsrEJeFCNFLXAs1dwFzoD2VPlwiuWdCpJe6g4pl-7Et7ljjtvQ_AQ61TP_EVT_Hjg1wgP88y06q3vcdDY9pnj1uO1tps61yinlEh9EMvf4sdHDDxv_LPc52MLoI8gCMT11t1Xd2jYrfw5EPKudDP6ByFNjygz_miGsPmJBh-4l3VjHYaUHRwqRgEkvvT5GC9iSAGH7QCTsJ-a"/>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800 mb-4">
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Vol 24h</p>
+<p class="text-sm font-semibold">$890M</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Market Cap</p>
+<p class="text-sm font-semibold">$14.2B</p>
+</div>
+</div>
+<a class="flex items-center justify-center gap-2 text-amber-500 font-bold text-sm py-2 bg-amber-500/5 rounded-lg group-hover:bg-amber-500 group-hover:text-slate-950 transition-all" href="#">
+                    View Details
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</a>
+</div>
+<!-- Card 5: LINK -->
+<div class="bg-surface-container-high border border-slate-800 rounded-2xl p-6 hover:border-amber-500/30 transition-all hover:shadow-xl hover:shadow-amber-500/5 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 bg-blue-500/10 rounded-full flex items-center justify-center border border-blue-500/20">
+<span class="material-symbols-outlined text-blue-400">link</span>
+</div>
+<div>
+<h3 class="font-bold text-lg leading-none">LINK/USDT</h3>
+<span class="text-xs text-slate-500">Chainlink</span>
+</div>
+</div>
+<span class="px-2.5 py-1 bg-red-500/10 text-red-400 text-xs font-bold rounded-full border border-red-500/20">-0.5%</span>
+</div>
+<div class="mb-6">
+<p class="text-3xl font-bold font-headline">$14.82</p>
+</div>
+<div class="h-16 w-full mb-6">
+<img alt="chart" class="w-full h-full object-cover rounded opacity-80" data-alt="flat reddish sideways market volatility line on premium dark trading interface" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB1AnUgsV2PkHmrzncJwUCGU47mncyqRxdvdG2ACStuiCePKWgoRC2ElOT6kohRBP-L6ILZtQFP40usH5uWAajFoS2PHf72YN2afrJRWRfhilnmx3gJ8hnBztyHydVdgyzpcqUkCSXkjIXZihJZPFX-CT4BpBSvff6yemjDrO2nqIUU4uv3tUNtZTcfpWNzFWvo0LnADqX693SHADalkPE01J-oyahwOvsQkNVTIK3gpYXHcBPZ1LhuHSSy0vaBhlgRXvYDQVlvAG7g"/>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800 mb-4">
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Vol 24h</p>
+<p class="text-sm font-semibold">$620M</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Market Cap</p>
+<p class="text-sm font-semibold">$8.9B</p>
+</div>
+</div>
+<a class="flex items-center justify-center gap-2 text-amber-500 font-bold text-sm py-2 bg-amber-500/5 rounded-lg group-hover:bg-amber-500 group-hover:text-slate-950 transition-all" href="#">
+                    View Details
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</a>
+</div>
+<!-- Card 6: DOT -->
+<div class="bg-surface-container-high border border-slate-800 rounded-2xl p-6 hover:border-amber-500/30 transition-all hover:shadow-xl hover:shadow-amber-500/5 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 bg-pink-500/10 rounded-full flex items-center justify-center border border-pink-500/20">
+<span class="material-symbols-outlined text-pink-400">category</span>
+</div>
+<div>
+<h3 class="font-bold text-lg leading-none">DOT/USDT</h3>
+<span class="text-xs text-slate-500">Polkadot</span>
+</div>
+</div>
+<span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-full border border-emerald-500/20">+3.8%</span>
+</div>
+<div class="mb-6">
+<p class="text-3xl font-bold font-headline">$7.23</p>
+</div>
+<div class="h-16 w-full mb-6">
+<img alt="chart" class="w-full h-full object-cover rounded opacity-80" data-alt="rising green crypto chart with smooth curves on elegant dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCdJ0gjrTlTaPauo8Ry_Lrcglyzpfkx01WJ7aQGFg47AkYk6zMxX19GmCO38vjOZHQBGueubf1IiaNXnIprE0abL0q3AQgEKSMhUsmABRuv9wOp8RpOATAqDmTl656O_GR7AByHKYbPjkby8sAJgAAw0UoHr4wv5mTwZMwqp6EmYHdifZohK1dDOtm_Guiq4tV7uhi2puPYe-67Hdb6GPgJUMsTB2UOSpnpJOKUsEpeixnH9-uGRgCXWvwS88KZ471LH8RmQUd2defn"/>
+</div>
+<div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-800 mb-4">
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Vol 24h</p>
+<p class="text-sm font-semibold">$340M</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Market Cap</p>
+<p class="text-sm font-semibold">$9.8B</p>
+</div>
+</div>
+<a class="flex items-center justify-center gap-2 text-amber-500 font-bold text-sm py-2 bg-amber-500/5 rounded-lg group-hover:bg-amber-500 group-hover:text-slate-950 transition-all" href="#">
+                    View Details
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</a>
+</div>
+</div>
+<!-- Price Alerts Summary Section -->
+<section class="bg-surface-container border border-slate-800 rounded-2xl overflow-hidden">
+<div class="px-6 py-4 border-b border-slate-800 flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-amber-500">notifications_active</span>
+<h2 class="font-bold text-lg">Active Price Alerts</h2>
+</div>
+<a class="text-amber-500 text-sm font-semibold hover:underline" href="#">Manage All Alerts</a>
+</div>
+<div class="divide-y divide-slate-800">
+<!-- Alert 1 -->
+<div class="px-6 py-4 flex items-center justify-between hover:bg-slate-900/50 transition-colors">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-3 min-w-[120px]">
+<span class="material-symbols-outlined text-amber-500 text-lg">currency_bitcoin</span>
+<span class="font-semibold">BTC/USDT</span>
+</div>
+<div class="flex items-center gap-2 text-slate-400">
+<span>Price Above</span>
+<span class="text-on-background font-mono font-bold">$70,000.00</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-full border border-emerald-500/20">
+<span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Active
+                        </span>
+<button class="text-slate-500 hover:text-on-background transition-colors">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+<!-- Alert 2 -->
+<div class="px-6 py-4 flex items-center justify-between hover:bg-slate-900/50 transition-colors">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-3 min-w-[120px]">
+<span class="material-symbols-outlined text-purple-400 text-lg">eco</span>
+<span class="font-semibold">ETH/USDT</span>
+</div>
+<div class="flex items-center gap-2 text-slate-400">
+<span>Price Below</span>
+<span class="text-on-background font-mono font-bold">$3,500.00</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-full border border-emerald-500/20">
+<span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Active
+                        </span>
+<button class="text-slate-500 hover:text-on-background transition-colors">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+<!-- Alert 3 -->
+<div class="px-6 py-4 flex items-center justify-between hover:bg-slate-900/50 transition-colors">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-3 min-w-[120px]">
+<span class="material-symbols-outlined text-cyan-400 text-lg">toll</span>
+<span class="font-semibold">SOL/USDT</span>
+</div>
+<div class="flex items-center gap-2 text-slate-400">
+<span>Price Above</span>
+<span class="text-on-background font-mono font-bold">$150.00</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5 px-3 py-1 bg-slate-800 text-slate-400 text-xs font-bold rounded-full border border-slate-700">
+<span class="w-1.5 h-1.5 bg-slate-500 rounded-full"></span>
+                            Pending
+                        </span>
+<button class="text-slate-500 hover:text-on-background transition-colors">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+</main>
+</body></html>

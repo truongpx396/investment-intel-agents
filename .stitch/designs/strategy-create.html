@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Create Strategy | Investment Intel</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary-fixed": "#00452d",
+              "on-surface-variant": "#99aad9",
+              "secondary-fixed": "#e9ddff",
+              "surface-container": "#0a1836",
+              "surface-container-highest": "#11244c",
+              "outline": "#6475a1",
+              "on-error-container": "#ff9b82",
+              "tertiary-container": "#69f6b8",
+              "on-primary-container": "#472a00",
+              "on-background": "#dee5ff",
+              "inverse-surface": "#faf8ff",
+              "secondary-dim": "#8455ef",
+              "surface": "#060e20",
+              "on-secondary-fixed": "#4d00b7",
+              "on-primary": "#5c3800",
+              "surface-bright": "#182b52",
+              "surface-container-lowest": "#000000",
+              "tertiary-dim": "#58e7ab",
+              "outline-variant": "#364770",
+              "on-error": "#450900",
+              "error": "#f97758",
+              "on-tertiary-fixed-variant": "#006544",
+              "error-dim": "#c44f34",
+              "secondary": "#d0bcff",
+              "on-secondary": "#4e03b8",
+              "primary-fixed-dim": "#e79400",
+              "on-tertiary-container": "#005a3c",
+              "surface-tint": "#ffb95f",
+              "tertiary-fixed": "#69f6b8",
+              "surface-container-low": "#06122c",
+              "on-tertiary": "#006443",
+              "primary-fixed": "#f8a010",
+              "tertiary": "#9bffce",
+              "primary": "#ffb95f",
+              "on-secondary-container": "#cab3ff",
+              "primary-container": "#f59e0a",
+              "surface-container-high": "#0f1e3f",
+              "tertiary-fixed-dim": "#58e7ab",
+              "secondary-fixed-dim": "#ddcdff",
+              "primary-dim": "#f8a010",
+              "on-secondary-fixed-variant": "#6a37d4",
+              "on-primary-fixed-variant": "#563400",
+              "on-primary-fixed": "#2a1700",
+              "inverse-primary": "#865400",
+              "error-container": "#85230a",
+              "surface-dim": "#060e20",
+              "secondary-container": "#4900ad",
+              "on-surface": "#dee5ff",
+              "inverse-on-surface": "#4d556b",
+              "background": "#060e20",
+              "surface-variant": "#11244c"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        body { background-color: #060e20; color: #dee5ff; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="font-body antialiased">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 shadow-xl shadow-black/20 flex justify-between items-center px-6 h-16 w-full font-['Space_Grotesk'] antialiased">
+<div class="flex items-center gap-8">
+<span class="text-xl font-bold tracking-tight text-amber-500">Investment Intel</span>
+<div class="hidden md:flex items-center bg-slate-800/50 rounded-lg px-3 py-1.5 gap-2 border border-slate-700">
+<span class="material-symbols-outlined text-slate-400 text-sm">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-sm text-slate-200 placeholder-slate-500 w-64" placeholder="Search markets..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-slate-400 hover:bg-slate-800/50 hover:text-amber-400 transition-colors rounded-full active:scale-95 duration-200">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-slate-400 hover:bg-slate-800/50 hover:text-amber-400 transition-colors rounded-full active:scale-95 duration-200">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</header>
+<div class="flex pt-16 h-screen">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 bg-slate-900 border-r border-slate-800 flex flex-col py-4 font-['Space_Grotesk'] text-sm font-medium">
+<div class="px-6 mb-6">
+<h2 class="text-slate-500 uppercase tracking-widest text-[10px] font-bold">Portfolio</h2>
+<p class="text-amber-500 text-xs mt-1">Active: Strategies</p>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined">dashboard</span> Dashboard
+                </a>
+<a class="flex items-center gap-3 px-4 py-3 bg-amber-500/10 text-amber-500 border-r-4 border-amber-500 transition-all active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined">insights</span> Strategies
+                </a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined">history</span> Alert History
+                </a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined">star</span> Watchlist
+                </a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined">settings</span> Settings
+                </a>
+</nav>
+<div class="px-4 mt-auto">
+<button class="w-full py-3 bg-amber-500 text-on-primary-fixed font-bold rounded-lg hover:bg-amber-400 transition-colors active:scale-95">
+                    Deploy New Bot
+                </button>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 flex-1 overflow-y-auto bg-background p-8">
+<div class="max-w-4xl mx-auto">
+<!-- Breadcrumb -->
+<nav class="flex items-center gap-2 text-xs text-slate-500 mb-4 font-medium uppercase tracking-wider">
+<span class="hover:text-amber-500 cursor-pointer">Dashboard</span>
+<span class="material-symbols-outlined text-[10px]">chevron_right</span>
+<span class="hover:text-amber-500 cursor-pointer">Strategies</span>
+<span class="material-symbols-outlined text-[10px]">chevron_right</span>
+<span class="text-slate-300">Create New</span>
+</nav>
+<!-- Page Title -->
+<h1 class="text-3xl font-bold font-headline text-white mb-8">Create Strategy</h1>
+<!-- Main Form Card -->
+<div class="bg-surface-variant border border-slate-700 rounded-xl overflow-hidden shadow-2xl">
+<!-- Stepper -->
+<div class="p-6 border-b border-slate-700 bg-slate-900/40">
+<div class="flex items-center justify-between relative max-w-2xl mx-auto">
+<!-- Connecting Lines -->
+<div class="absolute top-1/2 left-0 w-full h-0.5 bg-slate-800 -translate-y-1/2 z-0"></div>
+<div class="absolute top-1/2 left-0 w-1/4 h-0.5 bg-amber-500 -translate-y-1/2 z-0"></div>
+<!-- Step 1 -->
+<div class="relative z-10 flex flex-col items-center gap-2 group">
+<div class="w-10 h-10 rounded-full bg-amber-500 text-on-primary-fixed flex items-center justify-center font-bold ring-4 ring-amber-500/20">
+                                    1
+                                </div>
+<span class="text-[10px] font-bold uppercase tracking-widest text-amber-500">Select Asset</span>
+</div>
+<!-- Step 2 -->
+<div class="relative z-10 flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-slate-800 border-2 border-slate-700 text-slate-500 flex items-center justify-center font-bold">
+                                    2
+                                </div>
+<span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Signal Type</span>
+</div>
+<!-- Step 3 -->
+<div class="relative z-10 flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-slate-800 border-2 border-slate-700 text-slate-500 flex items-center justify-center font-bold">
+                                    3
+                                </div>
+<span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Conditions</span>
+</div>
+<!-- Step 4 -->
+<div class="relative z-10 flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-slate-800 border-2 border-slate-700 text-slate-500 flex items-center justify-center font-bold">
+                                    4
+                                </div>
+<span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Review</span>
+</div>
+</div>
+</div>
+<!-- Form Content -->
+<div class="p-8 space-y-10">
+<!-- Asset Selection -->
+<section>
+<label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Select Asset Pair</label>
+<div class="relative mb-6">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">search</span>
+<input class="w-full bg-slate-900 border border-slate-700 rounded-lg py-3 pl-12 pr-4 text-white focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all outline-none" placeholder="Search pairs (e.g. BTC/USDT)" type="text"/>
+</div>
+<div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+<!-- BTC (Selected) -->
+<div class="p-4 bg-slate-900/50 border-2 border-amber-500 rounded-lg flex items-center gap-3 cursor-pointer hover:bg-slate-800 transition-all ring-4 ring-amber-500/10">
+<div class="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center">
+<span class="text-xs font-bold text-white">BTC</span>
+</div>
+<div>
+<p class="text-sm font-bold text-white leading-none">BTC/USDT</p>
+<p class="text-[10px] text-slate-500 mt-1">Bitcoin</p>
+</div>
+<span class="material-symbols-outlined text-amber-500 ml-auto" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<!-- ETH -->
+<div class="p-4 bg-slate-900/50 border border-slate-700 rounded-lg flex items-center gap-3 cursor-pointer hover:border-slate-500 transition-all">
+<div class="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center">
+<span class="text-xs font-bold text-white">ETH</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-300 leading-none">ETH/USDT</p>
+<p class="text-[10px] text-slate-500 mt-1">Ethereum</p>
+</div>
+</div>
+<!-- SOL -->
+<div class="p-4 bg-slate-900/50 border border-slate-700 rounded-lg flex items-center gap-3 cursor-pointer hover:border-slate-500 transition-all">
+<div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center">
+<span class="text-xs font-bold text-white">SOL</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-300 leading-none">SOL/USDT</p>
+<p class="text-[10px] text-slate-500 mt-1">Solana</p>
+</div>
+</div>
+<!-- AVAX -->
+<div class="p-4 bg-slate-900/50 border border-slate-700 rounded-lg flex items-center gap-3 cursor-pointer hover:border-slate-500 transition-all">
+<div class="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center">
+<span class="text-xs font-bold text-white">AVAX</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-300 leading-none">AVAX/USDT</p>
+<p class="text-[10px] text-slate-500 mt-1">Avalanche</p>
+</div>
+</div>
+<!-- LINK -->
+<div class="p-4 bg-slate-900/50 border border-slate-700 rounded-lg flex items-center gap-3 cursor-pointer hover:border-slate-500 transition-all">
+<div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
+<span class="text-xs font-bold text-white">LINK</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-300 leading-none">LINK/USDT</p>
+<p class="text-[10px] text-slate-500 mt-1">Chainlink</p>
+</div>
+</div>
+<!-- DOT -->
+<div class="p-4 bg-slate-900/50 border border-slate-700 rounded-lg flex items-center gap-3 cursor-pointer hover:border-slate-500 transition-all">
+<div class="w-8 h-8 rounded-full bg-pink-500 flex items-center justify-center">
+<span class="text-xs font-bold text-white">DOT</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-300 leading-none">DOT/USDT</p>
+<p class="text-[10px] text-slate-500 mt-1">Polkadot</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Signal Type -->
+<section>
+<label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Signal Type</label>
+<div class="relative group">
+<select class="w-full bg-slate-900 border border-slate-700 rounded-lg py-3 px-4 text-white appearance-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 outline-none cursor-pointer">
+<option>Price Threshold</option>
+<option>RSI Indicator</option>
+<option>MACD Crossover</option>
+<option>Volume Surge</option>
+<option>% Change (24h)</option>
+</select>
+<span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none group-hover:text-amber-500 transition-colors">expand_more</span>
+</div>
+</section>
+<!-- Conditions -->
+<section>
+<label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Set Conditions</label>
+<div class="space-y-4">
+<!-- Row 1 -->
+<div class="flex flex-col md:flex-row gap-4">
+<div class="flex-1">
+<select class="w-full bg-slate-900 border border-slate-700 rounded-lg py-3 px-4 text-white focus:ring-2 focus:ring-amber-500/50 outline-none">
+<option>Greater Than</option>
+<option>Less Than</option>
+<option>Equal To</option>
+</select>
+</div>
+<div class="flex-1 relative">
+<span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold">$</span>
+<input class="w-full bg-slate-900 border border-slate-700 rounded-lg py-3 pl-8 pr-4 text-white font-mono focus:ring-2 focus:ring-amber-500/50 outline-none" type="text" value="68000"/>
+</div>
+</div>
+<!-- Row 2 & 3 -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="relative">
+<label class="text-[10px] text-slate-500 absolute top-1.5 left-4 z-10 font-bold uppercase tracking-widest">Timeframe</label>
+<select class="w-full bg-slate-900 border border-slate-700 rounded-lg pt-6 pb-2 px-4 text-white focus:ring-2 focus:ring-amber-500/50 outline-none">
+<option>Real-time</option>
+<option>1 minute</option>
+<option>5 minutes</option>
+<option>15 minutes</option>
+</select>
+</div>
+<div class="relative">
+<label class="text-[10px] text-slate-500 absolute top-1.5 left-4 z-10 font-bold uppercase tracking-widest">Cooldown</label>
+<select class="w-full bg-slate-900 border border-slate-700 rounded-lg pt-6 pb-2 px-4 text-white focus:ring-2 focus:ring-amber-500/50 outline-none">
+<option>1 hour</option>
+<option>4 hours</option>
+<option>12 hours</option>
+<option>24 hours</option>
+</select>
+</div>
+</div>
+</div>
+</section>
+<!-- Delivery Channels -->
+<section>
+<label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Delivery Channels</label>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+<!-- Telegram -->
+<div class="flex items-center justify-between p-4 bg-slate-900/30 border border-slate-800 rounded-lg">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-amber-500">send</span>
+<span class="text-sm font-medium text-slate-300">Telegram</span>
+</div>
+<div class="w-10 h-5 bg-emerald-500 rounded-full relative cursor-pointer">
+<div class="absolute right-1 top-1 w-3 h-3 bg-white rounded-full"></div>
+</div>
+</div>
+<!-- Email -->
+<div class="flex items-center justify-between p-4 bg-slate-900/30 border border-slate-800 rounded-lg">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-amber-500">mail</span>
+<span class="text-sm font-medium text-slate-300">Email</span>
+</div>
+<div class="w-10 h-5 bg-emerald-500 rounded-full relative cursor-pointer">
+<div class="absolute right-1 top-1 w-3 h-3 bg-white rounded-full"></div>
+</div>
+</div>
+<!-- In-App -->
+<div class="flex items-center justify-between p-4 bg-slate-900/30 border border-slate-800 rounded-lg">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-amber-500">notifications_active</span>
+<span class="text-sm font-medium text-slate-300">In-App</span>
+</div>
+<div class="w-10 h-5 bg-emerald-500 rounded-full relative cursor-pointer">
+<div class="absolute right-1 top-1 w-3 h-3 bg-white rounded-full"></div>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Actions Bar -->
+<div class="bg-slate-900/60 p-6 border-t border-slate-700 flex flex-col md:flex-row justify-between items-center gap-4">
+<button class="w-full md:w-auto px-8 py-3 rounded-lg border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 hover:text-white transition-all active:scale-95">
+                            Cancel
+                        </button>
+<div class="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+<button class="w-full md:w-auto px-8 py-3 rounded-lg border-2 border-amber-500 text-amber-500 font-bold hover:bg-amber-500/10 transition-all active:scale-95">
+                                Save Strategy
+                            </button>
+<button class="w-full md:w-auto px-8 py-3 rounded-lg bg-emerald-500 text-on-tertiary-fixed font-bold hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 transition-all active:scale-95">
+                                Save &amp; Activate
+                            </button>
+</div>
+</div>
+</div>
+<!-- Subtle Help Footer -->
+<div class="mt-8 flex items-center justify-center gap-4 text-xs text-slate-600">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">security</span>
+<span>Encrypted Configuration</span>
+</div>
+<div class="w-1 h-1 bg-slate-800 rounded-full"></div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">speed</span>
+<span>0.5ms Execution Latency</span>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Investment Intel Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface": "#0b1326",
+                        "inverse-primary": "#6d3bd7",
+                        "error-container": "#93000a",
+                        "surface-variant": "#2d3449",
+                        "tertiary-fixed-dim": "#4edea3",
+                        "on-surface-variant": "#cbc3d7",
+                        "on-primary-fixed-variant": "#5516be",
+                        "on-secondary": "#472a00",
+                        "on-tertiary": "#003824",
+                        "outline": "#958ea0",
+                        "surface-container-low": "#131b2e",
+                        "error": "#ffb4ab",
+                        "surface-container-high": "#222a3d",
+                        "on-tertiary-container": "#00311f",
+                        "on-primary-container": "#340080",
+                        "outline-variant": "#494454",
+                        "secondary-container": "#ee9800",
+                        "inverse-on-surface": "#283044",
+                        "secondary-fixed-dim": "#ffb95f",
+                        "surface-container-lowest": "#060e20",
+                        "inverse-surface": "#dae2fd",
+                        "on-error-container": "#ffdad6",
+                        "on-secondary-fixed-variant": "#653e00",
+                        "on-background": "#dae2fd",
+                        "tertiary-container": "#00a572",
+                        "primary-fixed": "#e9ddff",
+                        "background": "#0b1326",
+                        "surface-dim": "#0b1326",
+                        "secondary": "#ffb95f",
+                        "on-surface": "#dae2fd",
+                        "tertiary": "#4edea3",
+                        "tertiary-fixed": "#6ffbbe",
+                        "primary": "#d0bcff",
+                        "on-tertiary-fixed": "#002113",
+                        "surface-bright": "#31394d",
+                        "on-secondary-container": "#5b3800",
+                        "secondary-fixed": "#ffddb8",
+                        "surface-tint": "#d0bcff",
+                        "on-primary-fixed": "#23005c",
+                        "primary-fixed-dim": "#d0bcff",
+                        "on-tertiary-fixed-variant": "#005236",
+                        "on-primary": "#3c0091",
+                        "on-error": "#690005",
+                        "primary-container": "#a078ff",
+                        "on-secondary-fixed": "#2a1700",
+                        "surface-container-highest": "#2d3449",
+                        "surface-container": "#171f33"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Manrope"],
+                        "label": ["Manrope"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            background-color: #0b1326;
+            color: #dae2fd;
+            font-family: 'Manrope', sans-serif;
+        }
+        .glass-sidebar {
+            background: rgba(23, 31, 51, 0.8);
+            backdrop-filter: blur(20px);
+        }
+        .recessed-input {
+            background-color: #060e20;
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body class="antialiased overflow-x-hidden">
+<!-- Sidebar Navigation -->
+<aside class="w-[240px] h-full fixed left-0 top-0 flex flex-col h-full p-4 overflow-y-auto bg-[#171f33] border-r border-[#2d3449]/15 z-50">
+<div class="mb-8 px-2 flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-secondary flex items-center justify-center text-on-secondary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">bolt</span>
+</div>
+<div>
+<h1 class="text-xl font-bold tracking-tighter text-[#ffb95f] leading-none font-headline">Investment Intel</h1>
+<p class="text-[0.6875rem] uppercase tracking-[0.05em] text-on-surface-variant/60 font-label">Intelligence Suite</p>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2.5 text-[#d0bcff] font-bold bg-[#2d3449] rounded-lg transition-all scale-98" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-[#dae2fd]/60 hover:text-[#dae2fd] hover:bg-[#222a3d] transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">insights</span>
+<span class="text-sm">Strategies</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-[#dae2fd]/60 hover:text-[#dae2fd] hover:bg-[#222a3d] transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="text-sm">Alert History</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-[#dae2fd]/60 hover:text-[#dae2fd] hover:bg-[#222a3d] transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">star</span>
+<span class="text-sm">Watchlist</span>
+</a>
+<div class="pt-4 pb-2">
+<p class="px-3 text-[0.6875rem] uppercase tracking-[0.05em] text-on-surface-variant/40 font-label">Configuration</p>
+</div>
+<a class="flex items-center gap-3 px-3 py-2.5 text-[#dae2fd]/60 hover:text-[#dae2fd] hover:bg-[#222a3d] transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm">Settings</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-[#dae2fd]/60 hover:text-[#dae2fd] hover:bg-[#222a3d] transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">receipt_long</span>
+<span class="text-sm">Billing</span>
+</a>
+</nav>
+<div class="mt-auto pt-6 border-t border-outline-variant/10">
+<div class="bg-surface-container-high rounded-xl p-3 mb-4">
+<div class="flex items-center gap-3 mb-3">
+<img class="w-8 h-8 rounded-full border border-secondary/20" data-alt="Professional headshot of a financial analyst with a neutral background and professional attire, soft cinematic lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDmue7kwmcMdrouh0jpS08RLPqve5vUJsgx9ZVHgQRD6vY0bzW-JhzkwOU4q4u6hmPTjGn7N6iI_uImAdrlChnh_siNB7bMiwSw9raImTrusJ55ZGKW4CGY7s3FalJkBYNa06fzKGB4AiPZTiMLx3YUTIY2Jzl-xMvN_OW43698fJ33MrNWosNSUePI07MKdjwdjRU0i2kJQszhVGBoPBQmK1is7Ll63qkO0WCmfOdp1_Hv4Y0fxwnR6Pcd0nqPY6IXRrifsIw3hTl8"/>
+<div class="overflow-hidden">
+<p class="text-xs font-bold truncate text-on-surface">TP Analyst</p>
+<p class="text-[0.6875rem] text-on-surface-variant truncate">tp@intel.suite</p>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<span class="bg-secondary/10 text-secondary text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider">Free Plan</span>
+<span class="material-symbols-outlined text-secondary text-sm" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+</div>
+<button class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-surface-container-highest text-on-surface-variant hover:text-on-surface rounded-lg text-sm font-medium transition-all active:opacity-80">
+<span class="material-symbols-outlined text-sm">logout</span>
+                Sign Out
+            </button>
+</div>
+</aside>
+<!-- Top Navigation Bar -->
+<header class="fixed top-0 right-0 left-[240px] h-16 z-40 bg-[#0b1326]/80 backdrop-blur-xl flex items-center justify-between px-8 w-full border-b border-[#2d3449]/15">
+<div class="flex items-center gap-4">
+<h2 class="text-1.5rem font-bold font-headline tracking-tight text-[#dae2fd]">Dashboard</h2>
+</div>
+<div class="flex items-center gap-6">
+<div class="relative group cursor-pointer">
+<span class="material-symbols-outlined text-[#dae2fd]/70 group-hover:text-[#dae2fd]">notifications</span>
+<span class="absolute -top-1 -right-1 w-4 h-4 bg-error text-[10px] font-bold text-on-error rounded-full flex items-center justify-center">3</span>
+</div>
+<div class="flex items-center gap-3 pl-6 border-l border-outline-variant/20">
+<div class="text-right">
+<p class="text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-wider">Market Status</p>
+<p class="text-xs font-bold text-tertiary flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse shadow-[0_0_8px_rgba(78,222,163,0.8)]"></span>
+                        Live Signals
+                    </p>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Content Stage -->
+<main class="ml-[240px] pt-16 p-8 min-h-screen">
+<!-- Hero Stats Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+<div class="bg-surface-container-high p-6 rounded-xl border-l-4 border-secondary flex flex-col justify-between">
+<div>
+<p class="text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest mb-1">Active Strategies</p>
+<h3 class="text-4xl font-headline font-bold text-on-surface">03</h3>
+</div>
+<p class="text-xs text-secondary mt-4 font-medium">2 watching BTC · 1 watching ETH</p>
+</div>
+<div class="bg-surface-container-high p-6 rounded-xl border-l-4 border-primary flex flex-col justify-between">
+<div>
+<p class="text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest mb-1">Alerts Sent Today</p>
+<h3 class="text-4xl font-headline font-bold text-on-surface">47</h3>
+</div>
+<p class="text-xs text-primary mt-4 font-medium">Last: 14 min ago</p>
+</div>
+<div class="bg-surface-container-high p-6 rounded-xl border-l-4 border-tertiary flex flex-col justify-between">
+<div>
+<p class="text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest mb-1">Delivery Success</p>
+<h3 class="text-4xl font-headline font-bold text-on-surface">98.3%</h3>
+</div>
+<p class="text-xs text-tertiary mt-4 font-medium flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">trending_up</span>
+                    +0.2% vs yesterday
+                </p>
+</div>
+<div class="bg-surface-container-high p-6 rounded-xl border-l-4 border-outline-variant flex flex-col justify-between">
+<div>
+<p class="text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest mb-1">Watchlist Items</p>
+<h3 class="text-4xl font-headline font-bold text-on-surface">12</h3>
+</div>
+<p class="text-xs text-on-surface-variant/60 mt-4 font-medium">Daily digest: 09:00 UTC</p>
+</div>
+</div>
+<!-- Section: Strategies -->
+<div class="flex items-center justify-between mb-8">
+<div class="flex items-center gap-4">
+<h2 class="text-xl font-headline font-bold text-on-surface">My Strategies</h2>
+<span class="bg-surface-container-highest px-2 py-0.5 rounded text-[10px] text-on-surface-variant uppercase tracking-tighter">Instance: Core-01</span>
+</div>
+<button class="bg-primary text-on-primary-container px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:opacity-90 transition-all active:scale-95">
+<span class="material-symbols-outlined text-sm">add</span>
+                New Strategy
+            </button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-12">
+<!-- Strategy Card 1 -->
+<div class="bg-surface-container rounded-xl p-5 border-l-2 border-secondary hover:bg-surface-container-high transition-colors group cursor-pointer">
+<div class="flex justify-between items-start mb-4">
+<h4 class="font-bold text-lg text-on-surface">BTC Breakout</h4>
+<span class="flex items-center gap-1 text-[10px] text-tertiary font-bold uppercase tracking-wider px-2 py-1 bg-tertiary/10 rounded">
+<span class="w-1 h-1 rounded-full bg-tertiary"></span> Active
+                    </span>
+</div>
+<div class="space-y-3 mb-6">
+<div class="flex justify-between text-xs">
+<span class="text-on-surface-variant">Signal Logic</span>
+<span class="text-on-surface font-mono">RSI &gt; 70 (14-period)</span>
+</div>
+<div class="flex justify-between text-xs">
+<span class="text-on-surface-variant">Asset</span>
+<span class="text-secondary font-bold">BTC/USDT</span>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-outline-variant/10">
+<span class="text-[0.6875rem] text-on-surface-variant font-label">47 ALERTS TOTAL</span>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-secondary transition-colors">open_in_new</span>
+</div>
+</div>
+<!-- Strategy Card 2 -->
+<div class="bg-surface-container rounded-xl p-5 border-l-2 border-primary hover:bg-surface-container-high transition-colors group cursor-pointer">
+<div class="flex justify-between items-start mb-4">
+<h4 class="font-bold text-lg text-on-surface">ETH Accumulation</h4>
+<span class="flex items-center gap-1 text-[10px] text-tertiary font-bold uppercase tracking-wider px-2 py-1 bg-tertiary/10 rounded">
+<span class="w-1 h-1 rounded-full bg-tertiary"></span> Active
+                    </span>
+</div>
+<div class="space-y-3 mb-6">
+<div class="flex justify-between text-xs">
+<span class="text-on-surface-variant">Signal Logic</span>
+<span class="text-on-surface font-mono">Price &lt; $2,800</span>
+</div>
+<div class="flex justify-between text-xs">
+<span class="text-on-surface-variant">Asset</span>
+<span class="text-primary font-bold">ETH/USDC</span>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-outline-variant/10">
+<span class="text-[0.6875rem] text-on-surface-variant font-label">12 ALERTS TOTAL</span>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors">open_in_new</span>
+</div>
+</div>
+<!-- Strategy Card 3 -->
+<div class="bg-surface-container/50 rounded-xl p-5 border-l-2 border-outline-variant opacity-75 hover:opacity-100 transition-opacity group">
+<div class="flex justify-between items-start mb-4">
+<h4 class="font-bold text-lg text-on-surface-variant">BTC Volatility</h4>
+<span class="flex items-center gap-1 text-[10px] text-on-surface-variant/60 font-bold uppercase tracking-wider px-2 py-1 bg-surface-container-highest rounded">
+                        Paused
+                    </span>
+</div>
+<div class="space-y-3 mb-6">
+<div class="flex justify-between text-xs">
+<span class="text-on-surface-variant">Signal Logic</span>
+<span class="text-on-surface-variant/80 font-mono">Vol Spike &gt; 200%</span>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-outline-variant/10">
+<button class="text-xs font-bold text-primary hover:underline">Resume Strategy</button>
+<span class="material-symbols-outlined text-on-surface-variant/40">motion_photos_paused</span>
+</div>
+</div>
+<!-- Strategy Card 4 (CRITICAL: FAILURE) -->
+<div class="bg-error-container/10 rounded-xl p-5 border border-error/30 ring-1 ring-error/20 hover:bg-error-container/15 transition-all group">
+<div class="flex justify-between items-start mb-4">
+<h4 class="font-bold text-lg text-error">ETH Support</h4>
+<span class="flex items-center gap-1 text-[10px] text-on-error-container font-bold uppercase tracking-wider px-2 py-1 bg-error-container/60 rounded animate-pulse">
+<span class="material-symbols-outlined text-[10px]">warning</span> Critical
+                    </span>
+</div>
+<div class="mb-4">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-error text-sm">mail_lock</span>
+<p class="text-xs font-bold text-error">3 Delivery Failures Detected</p>
+</div>
+<p class="text-xs text-on-surface-variant">Webhook response: 503 Service Unavailable.</p>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-error/10">
+<span class="text-[0.6875rem] text-on-surface-variant font-label">23 TOTAL · 3 FAILED</span>
+<button class="bg-error text-on-error px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider hover:brightness-110 active:scale-95 transition-all">
+                        Fix Delivery
+                    </button>
+</div>
+</div>
+<!-- Strategy Card 5: Create -->
+<div class="border-2 border-dashed border-[#2d3449] rounded-xl p-5 flex flex-col items-center justify-center gap-3 hover:border-primary/50 hover:bg-primary/5 transition-all group cursor-pointer">
+<div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center group-hover:bg-primary group-hover:text-on-primary-container transition-all">
+<span class="material-symbols-outlined">add</span>
+</div>
+<p class="text-sm font-bold text-on-surface-variant group-hover:text-on-surface">Create New Strategy</p>
+</div>
+</div>
+<!-- Section: Recent Alerts -->
+<div class="flex items-center justify-between mb-6">
+<h2 class="text-xl font-headline font-bold text-on-surface">Recent Alerts</h2>
+<a class="text-xs font-bold text-primary flex items-center gap-1 hover:gap-2 transition-all" href="#">
+                View all History
+                <span class="material-symbols-outlined text-xs">arrow_forward</span>
+</a>
+</div>
+<div class="bg-surface-container rounded-xl overflow-hidden">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-high">
+<th class="px-6 py-4 text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest">Strategy</th>
+<th class="px-6 py-4 text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest">Asset</th>
+<th class="px-6 py-4 text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest">Signal</th>
+<th class="px-6 py-4 text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest">Delivered At</th>
+<th class="px-6 py-4 text-[0.6875rem] font-label text-on-surface-variant uppercase tracking-widest text-right">Status</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant/5">
+<tr class="hover:bg-surface-container-highest/30 transition-colors cursor-pointer group">
+<td class="px-6 py-4">
+<p class="text-sm font-bold text-on-surface">BTC Breakout</p>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 bg-secondary/10 text-secondary text-[10px] font-bold rounded">BTC/USDT</span>
+</td>
+<td class="px-6 py-4 text-sm text-on-surface-variant font-mono">RSI: 74.2</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">Today, 14:02:11</td>
+<td class="px-6 py-4 text-right">
+<span class="text-tertiary text-[10px] font-bold uppercase tracking-widest flex items-center justify-end gap-1">
+<span class="material-symbols-outlined text-xs" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                Delivered
+                            </span>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-highest/30 transition-colors cursor-pointer group">
+<td class="px-6 py-4">
+<p class="text-sm font-bold text-on-surface">ETH Support</p>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded">ETH/USDC</span>
+</td>
+<td class="px-6 py-4 text-sm text-on-surface-variant font-mono">Price: $2,795</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">Today, 13:44:02</td>
+<td class="px-6 py-4 text-right">
+<span class="text-error text-[10px] font-bold uppercase tracking-widest flex items-center justify-end gap-1">
+<span class="material-symbols-outlined text-xs" style="font-variation-settings: 'FILL' 1;">cancel</span>
+                                Failed
+                            </span>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-highest/30 transition-colors cursor-pointer group">
+<td class="px-6 py-4">
+<p class="text-sm font-bold text-on-surface">BTC Breakout</p>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 bg-secondary/10 text-secondary text-[10px] font-bold rounded">BTC/USDT</span>
+</td>
+<td class="px-6 py-4 text-sm text-on-surface-variant font-mono">RSI: 71.8</td>
+<td class="px-6 py-4 text-xs text-on-surface-variant">Today, 12:15:56</td>
+<td class="px-6 py-4 text-right">
+<span class="text-tertiary text-[10px] font-bold uppercase tracking-widest flex items-center justify-end gap-1">
+<span class="material-symbols-outlined text-xs" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                Delivered
+                            </span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Empty State (Hidden) -->
+<div class="hidden flex flex-col items-center justify-center py-24 text-center">
+<div class="w-16 h-16 bg-surface-container-highest rounded-full flex items-center justify-center mb-6">
+<span class="material-symbols-outlined text-3xl text-on-surface-variant">query_stats</span>
+</div>
+<h3 class="text-xl font-bold mb-2">No active intelligence streams</h3>
+<p class="text-on-surface-variant max-w-sm mb-8">Deploy your first strategy to start receiving high-fidelity market signals directly to your dashboard.</p>
+<button class="bg-primary text-on-primary-container px-6 py-3 rounded-lg font-bold">Deploy Strategy</button>
+</div>
+</main>
+<!-- Overlay Loading Skeletons (Example state) -->
+<!-- 
+    <div class="fixed inset-0 bg-surface/80 backdrop-blur-sm z-[100] flex items-center justify-center pointer-events-none opacity-0">
+        <div class="grid grid-cols-3 gap-6 w-full max-w-6xl p-8">
+            <div class="h-48 bg-surface-container animate-pulse rounded-xl"></div>
+            <div class="h-48 bg-surface-container animate-pulse rounded-xl"></div>
+            <div class="h-48 bg-surface-container animate-pulse rounded-xl"></div>
+        </div>
+    </div>
+    -->
+</body></html>

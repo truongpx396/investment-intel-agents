@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Alert History | Investment Intel</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "inverse-primary": "#865400",
+              "surface-container-high": "#0f1e3f",
+              "secondary-fixed-dim": "#ddcdff",
+              "surface-variant": "#11244c",
+              "on-error": "#450900",
+              "error": "#f97758",
+              "on-secondary-fixed": "#4d00b7",
+              "secondary": "#d0bcff",
+              "on-secondary": "#4e03b8",
+              "background": "#060e20",
+              "tertiary-container": "#69f6b8",
+              "on-secondary-fixed-variant": "#6a37d4",
+              "tertiary": "#9bffce",
+              "error-container": "#85230a",
+              "secondary-fixed": "#e9ddff",
+              "on-primary-fixed-variant": "#563400",
+              "on-tertiary-fixed": "#00452d",
+              "surface-bright": "#182b52",
+              "tertiary-fixed": "#69f6b8",
+              "on-surface-variant": "#99aad9",
+              "outline": "#6475a1",
+              "on-primary-fixed": "#2a1700",
+              "surface-container-highest": "#11244c",
+              "surface-container-low": "#06122c",
+              "surface-container": "#0a1836",
+              "primary-fixed-dim": "#e79400",
+              "on-tertiary-container": "#005a3c",
+              "error-dim": "#c44f34",
+              "secondary-container": "#4900ad",
+              "on-error-container": "#ff9b82",
+              "on-tertiary": "#006443",
+              "on-tertiary-fixed-variant": "#006544",
+              "on-primary-container": "#472a00",
+              "on-primary": "#5c3800",
+              "primary-dim": "#f8a010",
+              "on-surface": "#dee5ff",
+              "on-secondary-container": "#cab3ff",
+              "inverse-surface": "#faf8ff",
+              "primary-fixed": "#f8a010",
+              "primary-container": "#f59e0a",
+              "inverse-on-surface": "#4d556b",
+              "outline-variant": "#364770",
+              "surface-container-lowest": "#000000",
+              "primary": "#ffb95f",
+              "surface-dim": "#060e20",
+              "secondary-dim": "#8455ef",
+              "on-background": "#dee5ff",
+              "tertiary-dim": "#58e7ab",
+              "tertiary-fixed-dim": "#58e7ab",
+              "surface-tint": "#ffb95f",
+              "surface": "#060e20"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-headline { font-family: 'Space Grotesk', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased selection:bg-primary/30">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 shadow-xl flex justify-between items-center px-6 h-16 font-['Space_Grotesk'] antialiased">
+<div class="flex items-center gap-8">
+<h1 class="text-2xl font-bold tracking-tighter text-amber-500">Investment Intel</h1>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-slate-400 hover:text-amber-400 transition-colors duration-200" href="#">Dashboard</a>
+<a class="text-slate-400 hover:text-amber-400 transition-colors duration-200" href="#">Markets</a>
+<a class="text-amber-500 font-semibold transition-colors duration-200" href="#">Alert History</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative hidden sm:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm" data-icon="search">search</span>
+<input class="bg-surface-container border-none rounded-lg pl-10 pr-4 py-1.5 text-sm focus:ring-1 focus:ring-primary w-64 text-on-surface-variant" placeholder="Search markets..." type="text"/>
+</div>
+<button class="text-slate-400 hover:text-amber-400 transition-colors duration-200 active:scale-95 duration-100">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="text-slate-400 hover:text-amber-400 transition-colors duration-200 active:scale-95 duration-100">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<img alt="User profile" class="w-8 h-8 rounded-full border border-outline-variant" data-alt="close-up portrait of a professional male trader with sharp features and a clean-cut look in soft office lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC7D4OlRAF8kWkO5j9KqwlN5AGwNDGbZ0-3kLmOonp6rZiQ8HDmT7Iw-GzWd7seMyYCX7vpSQXlowlJuO72DV6OzMy7xMvNVPX7dzLv4pGisu5v-gWwT5V_2fhFoiRGE_4iyyBpf4ItaQr__jjfX8v6z_PWKOy_L4qLxB_kzw9jZ2hSbN2Wm4muUCtKJKqPIvHkK-jVPWZx-S8gyycgUNZyUZ23ttcYJLY9V9nOXkEkKaRiubD9xvPfMuzB2bX8-bbBN9B4LTe4NPPz"/>
+</div>
+</header>
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full w-64 pt-20 bg-slate-900 border-r border-slate-800 flex flex-col font-['Space_Grotesk'] text-sm font-medium z-40">
+<div class="px-4 mb-6">
+<button class="w-full bg-primary-container text-on-primary-container font-bold py-3 rounded-lg flex items-center justify-center gap-2 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined" data-icon="add" style="font-variation-settings: 'FILL' 0;">add</span>
+                New Trade
+            </button>
+</div>
+<nav class="flex-1 px-2 space-y-1">
+<div class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200 transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+                Dashboard
+            </div>
+<div class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200 transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="show_chart">show_chart</span>
+                Markets
+            </div>
+<div class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200 transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="account_balance_wallet">account_balance_wallet</span>
+                Portfolio
+            </div>
+<div class="flex items-center gap-3 px-4 py-3 bg-amber-500/10 text-amber-500 border-r-2 border-amber-500 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="history_toggle_off">history_toggle_off</span>
+                Alert History
+            </div>
+<div class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:bg-slate-800/50 hover:text-slate-200 transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="psychology">psychology</span>
+                Strategies
+            </div>
+</nav>
+<div class="mt-auto p-4 border-t border-slate-800 space-y-1">
+<div class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-200 transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+                Support
+            </div>
+<div class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-200 transition-all cursor-pointer">
+<span class="material-symbols-outlined" data-icon="logout">logout</span>
+                Logout
+            </div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 pt-16 min-h-screen p-8 bg-background">
+<!-- Page Header -->
+<div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-8">
+<div>
+<h2 class="text-3xl font-bold font-headline text-on-background tracking-tight">Alert History</h2>
+<p class="text-slate-400 mt-1">Track all your signal notifications</p>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors text-sm">
+<span class="material-symbols-outlined text-[20px]" data-icon="calendar_month">calendar_month</span>
+                    Last 7 Days
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors text-sm">
+<span class="material-symbols-outlined text-[20px]" data-icon="download">download</span>
+                    Export CSV
+                </button>
+</div>
+</div>
+<!-- Filter Bar -->
+<div class="bg-surface-container p-4 rounded-xl border border-outline-variant flex flex-wrap items-center justify-between gap-4 mb-8">
+<div class="flex flex-wrap items-center gap-3">
+<div class="relative">
+<select class="appearance-none bg-surface-container-high border border-outline-variant rounded-lg px-4 py-2 text-sm pr-10 focus:ring-primary focus:border-primary">
+<option>All Assets</option>
+<option>BTC/USDT</option>
+<option>ETH/USDT</option>
+<option>SOL/USDT</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" data-icon="expand_more">expand_more</span>
+</div>
+<div class="relative">
+<select class="appearance-none bg-surface-container-high border border-outline-variant rounded-lg px-4 py-2 text-sm pr-10 focus:ring-primary focus:border-primary">
+<option>All Signal Types</option>
+<option>Price Threshold</option>
+<option>RSI Indicator</option>
+<option>Volume Surge</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" data-icon="expand_more">expand_more</span>
+</div>
+<div class="relative">
+<select class="appearance-none bg-surface-container-high border border-outline-variant rounded-lg px-4 py-2 text-sm pr-10 focus:ring-primary focus:border-primary">
+<option>All Statuses</option>
+<option>Delivered</option>
+<option>Failed</option>
+<option>Pending</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" data-icon="expand_more">expand_more</span>
+</div>
+<div class="relative">
+<select class="appearance-none bg-surface-container-high border border-outline-variant rounded-lg px-4 py-2 text-sm pr-10 focus:ring-primary focus:border-primary">
+<option>All Channels</option>
+<option>Telegram</option>
+<option>Email</option>
+<option>In-App</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" data-icon="expand_more">expand_more</span>
+</div>
+<div class="h-6 w-[1px] bg-outline-variant mx-1"></div>
+<span class="bg-primary/20 text-primary px-3 py-1 rounded-full text-xs font-bold border border-primary/30">4 filters</span>
+</div>
+<div class="relative min-w-[300px]">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" data-icon="search">search</span>
+<input class="w-full bg-surface-container-high border border-outline-variant rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-primary focus:border-primary text-on-surface" placeholder="Search alerts..." type="text"/>
+</div>
+</div>
+<!-- Stats Summary -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant">
+<div class="flex justify-between items-start mb-2">
+<p class="text-slate-400 text-sm">Total Alerts</p>
+<span class="text-tertiary flex items-center text-xs font-medium">
+<span class="material-symbols-outlined text-sm" data-icon="trending_up">trending_up</span>
+                        +12%
+                    </span>
+</div>
+<h3 class="text-2xl font-bold font-headline">1,247</h3>
+</div>
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant">
+<div class="flex justify-between items-start mb-2">
+<p class="text-slate-400 text-sm">Delivered</p>
+<span class="text-emerald-400 text-xs font-medium">96% rate</span>
+</div>
+<h3 class="text-2xl font-bold font-headline text-tertiary">1,198</h3>
+</div>
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant">
+<div class="flex justify-between items-start mb-2">
+<p class="text-slate-400 text-sm">Failed</p>
+<span class="text-error flex items-center text-xs font-medium">
+<span class="material-symbols-outlined text-sm" data-icon="trending_down">trending_down</span>
+</span>
+</div>
+<h3 class="text-2xl font-bold font-headline text-error">32</h3>
+</div>
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant">
+<div class="flex justify-between items-start mb-2">
+<p class="text-slate-400 text-sm">Avg Response Time</p>
+<span class="material-symbols-outlined text-primary text-lg" data-icon="bolt">bolt</span>
+</div>
+<h3 class="text-2xl font-bold font-headline text-primary">0.8s</h3>
+</div>
+</div>
+<!-- Alert Table -->
+<div class="bg-surface-container border border-outline-variant rounded-xl overflow-hidden mb-6 shadow-2xl">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-highest/50 text-slate-400 text-xs uppercase tracking-wider">
+<th class="px-6 py-4 font-semibold">Timestamp</th>
+<th class="px-6 py-4 font-semibold">Asset</th>
+<th class="px-6 py-4 font-semibold">Signal Type</th>
+<th class="px-6 py-4 font-semibold">Condition</th>
+<th class="px-6 py-4 font-semibold">Result</th>
+<th class="px-6 py-4 font-semibold">Channel</th>
+<th class="px-6 py-4 font-semibold">Status</th>
+<th class="px-6 py-4 font-semibold text-right">Actions</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant/30 text-sm">
+<!-- Row 1 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">2 min ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">BTC/USDT</td>
+<td class="px-6 py-4">Price Threshold</td>
+<td class="px-6 py-4 text-slate-300">&gt; $68,000</td>
+<td class="px-6 py-4 text-tertiary font-medium">$68,245.30</td>
+<td class="px-6 py-4">
+<span class="material-symbols-outlined text-slate-400" data-icon="send">send</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-tertiary/10 text-tertiary border border-tertiary/20">DELIVERED</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="bg-surface-container-low/30 hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">15 min ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">ETH/USDT</td>
+<td class="px-6 py-4">RSI Indicator</td>
+<td class="px-6 py-4 text-slate-300">RSI &gt; 70</td>
+<td class="px-6 py-4 text-primary font-medium">RSI: 72.4</td>
+<td class="px-6 py-4">
+<span class="material-symbols-outlined text-slate-400" data-icon="mail">mail</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-tertiary/10 text-tertiary border border-tertiary/20">DELIVERED</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">1 hour ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">SOL/USDT</td>
+<td class="px-6 py-4">% Change</td>
+<td class="px-6 py-4 text-slate-300">&gt; 5%</td>
+<td class="px-6 py-4 text-tertiary font-medium">+6.2%</td>
+<td class="px-6 py-4">
+<span class="material-symbols-outlined text-slate-400" data-icon="send">send</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-tertiary/10 text-tertiary border border-tertiary/20">DELIVERED</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="bg-surface-container-low/30 hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">2 hours ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">AVAX/USDT</td>
+<td class="px-6 py-4">Volume Surge</td>
+<td class="px-6 py-4 text-slate-300">&gt; 200%</td>
+<td class="px-6 py-4 text-tertiary font-medium">+245%</td>
+<td class="px-6 py-4">
+<span class="material-symbols-outlined text-slate-400" data-icon="smartphone">smartphone</span>
+</td>
+<td class="px-6 py-4">
+<span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-error/10 text-error border border-error/20 w-fit">
+                                    FAILED
+                                    <span class="material-symbols-outlined text-[12px] cursor-pointer hover:rotate-180 transition-transform" data-icon="refresh">refresh</span>
+</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+<!-- Row 5 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">3 hours ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">BTC/USDT</td>
+<td class="px-6 py-4">MACD Crossover</td>
+<td class="px-6 py-4 text-slate-300">Bullish Cross</td>
+<td class="px-6 py-4 text-tertiary font-medium">Confirmed</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-slate-400 text-sm" data-icon="send">send</span>
+<span class="material-symbols-outlined text-slate-400 text-sm" data-icon="mail">mail</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-tertiary/10 text-tertiary border border-tertiary/20">DELIVERED</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+<!-- Row 6 -->
+<tr class="bg-surface-container-low/30 hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">5 hours ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">LINK/USDT</td>
+<td class="px-6 py-4">Price Threshold</td>
+<td class="px-6 py-4 text-slate-300">&lt; $15.00</td>
+<td class="px-6 py-4 text-error font-medium">$14.82</td>
+<td class="px-6 py-4">
+<span class="material-symbols-outlined text-slate-400" data-icon="mail">mail</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-tertiary/10 text-tertiary border border-tertiary/20">DELIVERED</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+<!-- Row 7 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">8 hours ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">ETH/USDT</td>
+<td class="px-6 py-4">Volume Surge</td>
+<td class="px-6 py-4 text-slate-300">&gt; 150%</td>
+<td class="px-6 py-4 text-tertiary font-medium">+178%</td>
+<td class="px-6 py-4">
+<span class="material-symbols-outlined text-slate-400" data-icon="send">send</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-primary-container/20 text-primary-dim border border-primary/20">PENDING</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+<!-- Row 8 -->
+<tr class="bg-surface-container-low/30 hover:bg-primary/5 transition-colors">
+<td class="px-6 py-4 text-slate-400">12 hours ago</td>
+<td class="px-6 py-4 font-bold text-on-surface">DOT/USDT</td>
+<td class="px-6 py-4">% Change</td>
+<td class="px-6 py-4 text-slate-300">&gt; 3%</td>
+<td class="px-6 py-4 text-tertiary font-medium">+3.8%</td>
+<td class="px-6 py-4">
+<span class="material-symbols-outlined text-slate-400" data-icon="smartphone">smartphone</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-tertiary/10 text-tertiary border border-tertiary/20">DELIVERED</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Pagination -->
+<div class="flex flex-col md:flex-row justify-between items-center gap-4">
+<p class="text-slate-400 text-sm">Showing 1-8 of 1,247 alerts</p>
+<div class="flex items-center gap-2">
+<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant text-slate-400 hover:bg-surface-container transition-colors disabled:opacity-50" disabled="">
+<span class="material-symbols-outlined" data-icon="chevron_left">chevron_left</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-on-primary font-bold">1</button>
+<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors font-medium">2</button>
+<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors font-medium">3</button>
+<span class="text-slate-500 px-2">...</span>
+<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors font-medium">156</button>
+<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors">
+<span class="material-symbols-outlined" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+</div>
+</main>
+</body></html>

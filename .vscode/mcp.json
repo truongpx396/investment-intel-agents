@@ -11,7 +11,7 @@
       "command": "npx",
       "args": ["-y", "stitch-mcp"],
       "env": {
-        "GOOGLE_CLOUD_PROJECT": "${GOOGLE_CLOUD_PROJECT}",
+        "GOOGLE_CLOUD_PROJECT": "${env:GOOGLE_CLOUD_PROJECT}",
         "PATH": "${env:HOME}/google-cloud-sdk/bin:${env:PATH}"
       }
     }
