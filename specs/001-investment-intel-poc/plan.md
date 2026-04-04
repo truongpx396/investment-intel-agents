@@ -152,7 +152,7 @@ specs/001-investment-intel-poc/
 ├── quickstart.md        ← local dev setup
 ├── contracts/
 │   ├── rest-api.md      ← REST endpoint contracts (auth, strategies, alerts, watchlist, digest)
-│   └── nats-events.md   ← NATS message schemas (signal.triggered, digest.requested)
+│   └── nats-events.md   ← NATS message schemas (signal.triggered.{asset}, alert.pending)
 └── tasks.md             ← implementation task list
 ```
 
@@ -264,9 +264,14 @@ Key findings to carry into implementation:
   strategy is wasteful at scale — evaluate all active strategies in a single pass per tick
 - RSI calculation requires at minimum 14 candles of OHLCV data; market data adapter must return
   rolling window, not just spot price
-- On signal fire: publish `signal.triggered` event to NATS JetStream; separate consumer in
-  `internal/alerts/` persists Alert record and dispatches Telegram message via Telegram Bot API
-  directly (not via GoClaw — GoClaw handles digest only; real-time alerts go direct for latency)
+- **Signal cooldown (anti-duplicate)**: before publishing to NATS, poller checks Redis key `cooldown:{signal_rule_id}` (default TTL 5 min, configurable via `SIGNAL_COOLDOWN_SECONDS`); if key present, suppress publish for this tick — prevents duplicate events when a condition stays true across multiple consecutive ticks and protects against alert spam
+- **NATS stream topology** (two streams — incompatible retention policies require separation):
+  - `SIGNALS` stream: `signal.triggered.>`, `WorkQueuePolicy` (auto-delete on ACK), `MaxAge 1h`, `FileStorage`, `Replicas 1`; consumer `alerts-dispatcher` with `MaxAckPending: 100` (flow-control ceiling)
+  - `ALERT_QUEUE` stream: `alert.pending` + `alert.expired`, `LimitsPolicy`, `MaxAge 25h`, `FileStorage`, `Replicas 1`; consumer `alerts-redriver` with `MaxDeliver: 48`, `AckWait: 60s`
+  - Both streams initialised explicitly on backend startup via `pkg/nats/` — do NOT rely on NATS auto-create defaults
+  - `FileStorage` requires a named Docker volume (`nats-data:/data`) in both local and production compose files
+- On signal fire: publish `signal.triggered.{asset}` to `SIGNALS` stream (subject is asset-keyed; user isolation enforced by `user_id` in payload); `alerts-dispatcher` persists Alert and calls Telegram Bot API directly (not via GoClaw — GoClaw handles digest only; real-time alerts go direct for latency); if user has no linked Telegram, dispatcher sets `telegram_status=Pending` and publishes `alert.pending` to `ALERT_QUEUE`
+- **Re-drive pattern (FR-025)**: `alerts-redriver` consumes `alert.pending`; if still unlinked calls `NakWithDelay(backoff)` — NATS redelivers the *same* message (no re-publish, no stream bloat); when `MaxDeliver` is exhausted NATS forwards message to `alert.expired` subject; lightweight DLQ handler sets `telegram_status=Expired`; 24 h expiry enforced by stream `MaxAge` as the authoritative safety net
 
 ### Market Data Feed
 - **Selected for POC**: CoinGecko Free API (no key required, 30 req/min — sufficient for 2 assets
