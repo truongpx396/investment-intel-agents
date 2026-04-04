@@ -43,23 +43,23 @@
 
 ### Typography
 
-**Primary recommendation (Crypto/Web3):**
-- **Heading Font:** Orbitron (400, 500, 600, 700) — futuristic, crypto-native
-- **Body Font:** Exo 2 (300, 400, 500, 600, 700) — readable, technical
+**Primary recommendation (aligned with live Stitch):**
+- **Heading Font:** Space Grotesk (300, 400, 500, 600, 700) — clean, modern
+- **Body Font:** Inter (300, 400, 500, 600) — readable, UI-optimized
 
 **Alternative (Financial Trust):**
 - IBM Plex Sans — use for dense data tables and legal/billing copy where readability trumps branding
 
 **CSS Import:**
 ```css
-@import url('https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
 ```
 
 **Tailwind Config:**
 ```js
 fontFamily: {
-  display: ['Orbitron', 'sans-serif'],
-  body: ['Exo 2', 'sans-serif'],
+  headline: ['Space Grotesk', 'sans-serif'],
+  body: ['Inter', 'sans-serif'],
 }
 ```
 

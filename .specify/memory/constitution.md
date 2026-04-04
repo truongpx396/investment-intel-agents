@@ -17,7 +17,7 @@ Templates requiring updates:
 Follow-up TODOs: None — all placeholders resolved.
 -->
 
-# test-spec-kit Constitution
+# investment intel agents Constitution
 
 ## Core Principles
 
