@@ -30,7 +30,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 - **API Gateway**: Traefik v3 (routing, TLS termination, rate limiting)
 - **Auth / User management**: Supabase (PostgreSQL + Auth + Row Level Security)
 - **Billing**: Stripe SDK (Go + React)
-- **AI Agent gateway**: GoClaw v1.74+ (multi-agent orchestration, Telegram channel, cron, LLM tools)
+- **AI Agent gateway**: GoClaw v1.74+ → current (multi-agent orchestration, Telegram channel, cron, LLM tools); **web UI embedded in binary** since Apr 2026 — no separate web container needed; dashboard at `http://localhost:18790`; permission model now has **6 layers** (added: per-agent grants with setting-level overrides, Apr 2026)
 - **Message queue**: NATS JetStream (signal event fanout, notification queue)
 - **Frontend**: ReactJS 19 + TailwindCSS v4 + TanStack Router + TanStack Query
 - **LLM (digest summarisation)**: Anthropic Claude (via GoClaw provider config, claude-3-5-haiku)
@@ -131,11 +131,12 @@ agent layer. Key features used in this POC:
 | **Multi-tenant PostgreSQL** | GoClaw shares the same Postgres instance; per-user agent contexts |
 | **message tool** | Sends formatted digest to each user's Telegram chat |
 | **Agent teams + task board** | Optional future: coordinator agent delegates per-user digest to sub-agents |
+| **Subagent `waitAll` + auto-retry** | Parallel `web_fetch` per watchlist project with automatic retry and token tracking (Apr 2026) |
+| **Per-agent grants** | Scope digest agent's backend API access to specific `/internal/` endpoints; 6th permission layer (Apr 2026) |
+| **Channel health diagnostics** | Actionable Telegram channel health panel with remediation steps — use for T010/T031 debugging (Apr 2026) |
 | **Built-in observability (OTLP)** | LLM call tracing feeds Prometheus/Grafana |
 
-**Deployment**: GoClaw runs as a single Docker container alongside backend services, connected to
-the shared Postgres and Redis instances. NATS is not used by GoClaw directly — the Go signal
-service publishes to NATS; GoClaw operates on its own scheduler for digest tasks.
+**Deployment**: GoClaw runs as a **single Docker container** (one binary — web UI + API embedded, dashboard at `http://localhost:18790`) alongside backend services, connected to the shared Postgres and Redis instances. **No separate `goclaw-web` container is needed** (web UI was embedded into the Go binary in Apr 2026). NATS is not used by GoClaw directly — the Go signal service publishes to NATS; GoClaw operates on its own scheduler for digest tasks.
 
 ---
 
@@ -243,6 +244,14 @@ Key findings to carry into implementation:
 ### GoClaw Integration
 - GoClaw v1.74+ requires Go 1.26, PostgreSQL 18 + pgvector, Redis (optional but recommended)
 - Digest agent uses `cron` tool (cron expression `30 8 * * *` = 08:30 UTC daily)
+- **Apr 2026 updates** (apply during T006/T010/T055–T057a):
+  - Web UI is now embedded in the Go binary — single `latest` Docker image, dashboard at `http://localhost:18790`; no `goclaw-web` service in docker-compose
+  - Cron timezone handling is stable for all schedule kinds (`cron`, `at`, `every`); "Run Now" button works for manual testing
+  - Subagents support `waitAll` + auto-retry + token tracking — use for parallel `web_fetch` per watchlist project
+  - Per-agent grants (6th permission layer) — scope digest agent's API access to specific `/internal/` endpoints
+  - KG sharing is configured separately from workspace sharing — configure KG access independently if needed
+  - Channel health diagnostics panel in dashboard — use to verify Telegram connectivity before custom code
+  - SSRF re-validation triggers automatically when a provider type is changed
 - Per-user digest: `message` tool with user's Telegram chat ID (stored in Postgres by backend, read
   by GoClaw agent context or via a custom skill that queries backend API)
 - GoClaw shares Postgres with the backend service; schema namespacing required (prefix `gc_` for
