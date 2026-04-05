@@ -33,6 +33,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 - **AI Agent gateway**: GoClaw v1.74+ → current (multi-agent orchestration, Telegram channel, cron, LLM tools); **web UI embedded in binary** since Apr 2026 — no separate web container needed; dashboard at `http://localhost:18790`; permission model now has **6 layers** (added: per-agent grants with setting-level overrides, Apr 2026)
 - **Message queue**: NATS JetStream (signal event fanout, notification queue)
 - **Frontend**: ReactJS 19 + TailwindCSS v4 + TanStack Router + TanStack Query
+- **Component development & docs**: Storybook 8 (`@storybook/react-vite`) — isolated component development, visual regression baseline, and living design-system documentation
 - **LLM (digest summarisation)**: Anthropic Claude (via GoClaw provider config, claude-3-5-haiku)
 - **Crypto news API**: CryptoPanic free tier (50 req/day per token; DuckDuckGo fallback on quota
   exhaustion). Abstracted behind `NewsProvider` interface in `ai-service/src/news/`.
@@ -51,7 +52,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 **Testing**:
 - Go: `go test` + `testify` + `httptest` for API contract tests
 - Python: `pytest` + `pytest-asyncio`
-- Frontend: Vitest + React Testing Library + Playwright (E2E)
+- Frontend: Vitest + React Testing Library + Playwright (E2E) + Storybook (component stories + `@storybook/test` interaction tests)
 - CI: GitHub Actions
 
 **Target Platform**: DigitalOcean Droplets (Linux/amd64) + Cloudflare DNS/CDN/WAF
@@ -201,6 +202,7 @@ investment-intel/
 ├── frontend/                        # React SPA
 │   ├── src/
 │   │   ├── components/              # Design system primitives + feature components
+│   │   │   └── *.stories.tsx        # Storybook story files co-located with components
 │   │   ├── pages/
 │   │   │   ├── auth/                # SignIn, SignUp, ForgotPassword
 │   │   │   ├── dashboard/           # Strategy list + quick stats
@@ -212,6 +214,7 @@ investment-intel/
 │   │   │   └── admin/               # Admin: user management, subscription config
 │   │   ├── services/                # API client (TanStack Query hooks)
 │   │   └── lib/                     # Utilities, design tokens
+│   ├── .storybook/                  # Storybook config (main.ts, preview.ts)
 │   └── tests/
 │       ├── unit/                    # Vitest + React Testing Library
 │       └── e2e/                     # Playwright

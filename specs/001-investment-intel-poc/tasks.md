@@ -19,11 +19,12 @@ feature work begins. No user story can be built without this foundation.
 - [ ] T001 Initialise monorepo directory structure per `plan.md` (`backend/`, `ai-service/`, `goclaw/`, `frontend/`, `infra/`, `migrations/`)
 - [ ] T002 [P] Bootstrap Go module in `backend/` (`go.mod`, `go.sum`, `golangci-lint` config, `Makefile`)
 - [ ] T003 [P] Bootstrap Python project in `ai-service/` (`pyproject.toml`, `uv.lock`, `ruff` config)
-- [ ] T004 [P] Bootstrap React project in `frontend/` (Vite + React 19, TailwindCSS v4, TanStack Router, TanStack Query, Vitest, Playwright)
+- [ ] T004 [P] Bootstrap React project in `frontend/` (Vite + React 19, TailwindCSS v4, TanStack Router, TanStack Query, Vitest, Playwright, Storybook 8 with `@storybook/react-vite`); configure `.storybook/main.ts` with Vite builder and TailwindCSS; verify `npm run storybook` starts successfully
 - [ ] T005 [P] Configure GitHub Actions CI pipeline: lint + test gates for Go, Python, and React; run on every PR
 - [ ] T006 [P] Set up `docker-compose.yml` for local dev: Postgres 18 + pgvector, Redis 7, NATS JetStream, Traefik, GoClaw (`latest` image — web UI embedded, dashboard at `http://localhost:18790`), backend, ai-service, frontend, `prometheus-nats-exporter` — **no separate `goclaw-web` container** (Apr 2026: web UI is compiled into the Go binary); NATS service MUST mount a named volume (`nats-data:/data`) and enable JetStream with `FileStorage` configured (`--js --sd /data` flags or equivalent NATS config file) so that stream state persists across `docker compose restart`
 - [ ] T007 [P] Create initial PostgreSQL migration framework (`golang-migrate`); add `migrations/` directory with `001_init.sql` creating base schema namespaces (`app_`, `gc_`)
-- [ ] T008 [P] Define TailwindCSS design tokens (colours, spacing, typography) and create shared component primitives: `Button`, `Input`, `Card`, `Badge`, `Spinner`, `EmptyState`, `ErrorMessage`
+- [ ] T008 [P] Define TailwindCSS design tokens (colours, spacing, typography) and create shared component primitives: `Button`, `Input`, `Card`, `Badge`, `Spinner`, `EmptyState`, `ErrorMessage`; each primitive MUST have a co-located `*.stories.tsx` file covering all variants (size, state, disabled, loading); Storybook stories serve as the living design-system documentation and visual baseline — **no primitive ships without a story**
+- [ ] T008a [P] Add `storybook:build` step to GitHub Actions CI: build static Storybook (`npm run build-storybook`) and run `@storybook/test-runner` to execute interaction tests; fail CI if any story throws or any interaction test fails; Storybook build artefact archived as a CI artefact for visual review
 - [ ] T009 [P] Configure Traefik static config: TLS termination (Cloudflare origin cert), routing rules for `api.`, `app.`, `goclaw.` subdomains, rate-limit middleware
 - [ ] T010 [P] Configure GoClaw: `.env` with `GOCLAW_ANTHROPIC_API_KEY`, `GOCLAW_TELEGRAM_BOT_TOKEN`, `GOCLAW_DB_*`; `docker-compose.goclaw.yml`; verify `GET /health` returns 200 — use the `latest` image (web UI + API in one binary, dashboard at `http://localhost:18790`); use **channel health diagnostics panel** in the GoClaw dashboard to verify Telegram bot token and channel connectivity before writing any custom diagnostic code (Apr 2026)
 - [ ] T010a [P] Create `specs/001-investment-intel-poc/contracts/rest-api.md`: draft endpoint signatures and response schemas for auth, strategies, alerts, watchlist, billing, and internal service-to-service routes; prerequisite for all contract tests in Phases 3–8
@@ -270,4 +271,4 @@ as Active. Edit threshold → verify persisted. Delete → gone. No notification
 | 10 – Quality Gates | — | T071–T078a | Constitution compliance |
 | 11 – Deploy | — | T079–T083 | POC handoff |
 
-**Total tasks**: 94 (83 original + 11 added by analysis remediation: T010a–T010c, T031a, T039a, T042a, T043a, T054a, T057a, T058a, T078a)
+**Total tasks**: 96 (83 original + 11 added by analysis remediation: T010a–T010c, T031a, T039a, T042a, T043a, T054a, T057a, T058a, T078a + 2 added for Storybook: T008a; T004/T008 expanded in-place)
