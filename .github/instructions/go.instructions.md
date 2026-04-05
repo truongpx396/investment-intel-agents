@@ -105,14 +105,86 @@ Follow idiomatic Go practices and community standards when writing Go code. Thes
 
 ## Architecture and Project Structure
 
-### Package Organization
+### Project Layout
 
-- Follow standard Go project layout conventions
-- Keep `main` packages in `cmd/` directory
-- Put reusable packages in `pkg/` or `internal/`
-- Use `internal/` for packages that shouldn't be imported by external projects
-- Group related functionality into packages
+This project follows Clean Architecture with a feature-based package layout. The directory structure is prescribed — do NOT deviate.
+
+Repository root:
+
+```
+.
+├── cmd/server/main.go        # Bootstrap, wiring, server start
+├── config/config.go          # Env/file config struct & loader (NO client instantiation)
+├── internal/                 # ALL feature application code lives here
+│   └── <feature>/            # Feature modules (iam/, datastore/, audit/)
+├── pkg/                      # Shared reusable code (imported by internal/ features)
+│   ├── platform/             # Concrete infra clients (postgres/, redis/, otel/, logger/)
+│   └── shared/               # Cross-cutting types (dto/, errors/, middleware/, model/)
+├── migrations/               # Versioned SQL migration files
+├── tests/                    # Contract (Bruno) and E2E tests
+│   ├── contract/bruno/
+│   └── e2e/
+├── docs/api/                 # OpenAPI specs
+├── docker-compose.yml
+├── Dockerfile
+├── Makefile
+├── .golangci.yml
+└── go.mod
+```
+
+Critical rules:
+- Keep main packages in `cmd/` directory
+- Group related functionality into feature packages under `internal/`
 - Avoid circular dependencies
+- Shared cross-cutting types live under `pkg/shared/` — NOT at the repository root or inside features
+
+### Feature Module Layout
+
+Each feature (e.g., `internal/iam/`, `internal/datastore/`) MUST follow this structure:
+
+```
+internal/<feature>/
+├── module.go                 # DI wiring: SetupModule(appCtx)
+├── model/                    # Domain entities & value objects (zero imports)
+├── dto/                      # Request/response DTOs (one file per use case)
+├── errors/                   # Feature-scoped error definitions
+├── service/                  # Business logic (one file per use case + _test.go)
+└── infra/                    # All I/O adapters
+    ├── repo/
+    │   └── db/               # Database repository implementations
+    └── transport/
+        └── http/             # HTTP handlers + controller.go (route registration)
+```
+
+`module.go` pattern: Every feature MUST expose a `SetupModule(appCtx)` function that:
+
+- Instantiates repos/caches using platform clients from `appCtx`
+- Instantiates services with those repos
+- Instantiates transport controllers with those services
+- Registers routes on the shared router
+- Only `cmd/server/main.go` may call `SetupModule` — no other package performs wiring
+
+Dependency direction: `Transport → Service → Repository → Model`. `Model` has zero internal imports. Violations MUST be rejected.
+
+### Platform Infrastructure (`pkg/platform/`)
+
+- One sub-package per technology: `postgres/`, `redis/`, `otel/`, `logger/`
+- Each exposes a constructor: `New(cfg) (*Client, error)` plus health-check/shutdown
+- Feature modules MUST NOT import `pkg/platform/` directly — they receive clients via `appCtx`
+- Only `cmd/server/main.go` calls `pkg/platform/` constructors
+
+### DTO Placement Rules
+
+- Request/response DTOs (HTTP payloads, validation tags) live in the feature's `dto/` sub-package
+- Transport handlers MUST convert DTOs to/from domain entities before calling services
+- Domain entities in `model/` MUST NEVER carry transport concerns (no JSON tags on model types; JSON tags go on DTOs)
+- Shared DTOs (e.g., pagination wrapper) live in `pkg/shared/dto/`
+
+### Cross-Module Communication
+
+- Feature packages MUST NOT import another feature's unexported types
+- Inter-feature dependencies MUST go through exported interfaces or `pkg/shared/`
+- All external service interactions (Casdoor, payment gateways, etc.) MUST be behind an interface defined in the consuming module, with concrete implementations in `infra/`
 
 ### Dependency Management
 
@@ -203,24 +275,51 @@ Follow idiomatic Go practices and community standards when writing Go code. Thes
 
 ## API Design
 
-### HTTP Handlers
+### HTTP Handlers (Gin Framework)
 
-- Use `http.HandlerFunc` for simple handlers
-- Implement `http.Handler` for handlers that need state
-- Use middleware for cross-cutting concerns
-- Set appropriate status codes and headers
-- Handle errors gracefully and return appropriate error responses
-- Router usage by Go version:
-	- If `go >= 1.22`, prefer the enhanced `net/http` `ServeMux` with pattern-based routing and method matching
-	- If `go < 1.22`, use the classic `ServeMux` and handle methods/paths manually (or use a third-party router when justified)
+This project uses **Gin** as the HTTP router/framework.
 
-### JSON APIs
+- Use `gin.HandlerFunc` for handlers; accept `*gin.Context` as the parameter
+- Use Gin middleware for cross-cutting concerns (auth, CORS, request ID, logging, RBAC)
+- Set appropriate status codes via `c.JSON(status, body)`, `c.AbortWithStatusJSON(status, body)`
+- Handle errors gracefully and return structured JSON error responses (`{code, message, details}`)
+- All routes MUST be registered under `/api/v1/` prefix (API versioning)
+- Route registration happens in each feature's `infra/transport/http/controller.go`
+- Group routes by feature and apply middleware per group (e.g., auth middleware, RBAC middleware with permission keys)
+
+### JSON APIs & Error Responses
 
 - Use struct tags to control JSON marshaling
 - Validate input data
 - Use pointers for optional fields
 - Consider using `json.RawMessage` for delayed parsing
 - Handle JSON errors appropriately
+
+**Unified Error Schema **: ALL error responses MUST use:
+```json
+{ "code": "ERROR_CODE", "message": "Human-readable message", "details": [...] }
+```
+- Error codes come from a shared registry (`pkg/shared/errors/registry.go`)
+- Use consistent HTTP status codes across all endpoints
+- Error codes are stable machine keys — frontends use them for i18n translation lookup
+
+**API Consistency Rules**:
+- All timestamps MUST be ISO 8601 / RFC 3339 in UTC
+- Monetary values MUST use the smallest currency unit (cents)
+- Pagination MUST use a uniform scheme (`page`, `page_size`) with identical parameter names across all list endpoints
+- Sorting, filtering, and search MUST follow a single convention across all endpoints
+
+### BFF Response Shape
+
+API responses MUST be shaped to serve the UI directly:
+
+- **Mirror UI structure**: If the UI groups fields into sections, the response MUST reflect that grouping as nested objects
+- **Consistent field naming**: A concept MUST use the same field name in every schema (e.g., `name` everywhere, never `full_name` in one and `name` in another)
+- **Enum consistency**: A constrained set of values MUST carry the same `enum` definition in every schema
+- **Stable unique keys**: Every list item MUST provide a stable, unique `id` or business key for frontend rendering keys
+- **`key` vs `display_name` separation**: Machine identifiers (`key`) and human-readable labels (`display_name`) MUST be two distinct fields
+- **Pre-computed display values**: Include pre-formatted values (e.g., `"3/5"` label) where the backend can cheaply compute them
+- **No `additionalProperties` for structured data**: Use typed arrays of explicit objects for UI-rendered data
 
 ### HTTP Clients
 
@@ -278,6 +377,17 @@ Follow idiomatic Go practices and community standards when writing Go code. Thes
 
 ## Testing
 
+### TDD Workflow (NON-NEGOTIABLE)
+
+All feature implementation MUST follow strict Test-Driven Development:
+
+1. **Red**: Write a failing test that describes expected behavior BEFORE writing any production code
+2. **Green**: Write the minimum production code to make the failing test pass
+3. **Refactor**: Improve the code while keeping all tests green
+
+- No production code change is permitted without a corresponding test change or addition
+- Pull requests MUST include test commits that precede or accompany the implementation commits
+
 ### Test Organization
 
 - Keep tests in the same package (white-box testing)
@@ -287,10 +397,25 @@ Follow idiomatic Go practices and community standards when writing Go code. Thes
 
 ### Writing Tests
 
-- Use table-driven tests for multiple test cases
+- **Table-driven (MANDATORY)**: All unit tests MUST use Go's table-driven pattern:
+  ```go
+  tests := []struct {
+      name     string
+      input    InputType
+      expected ExpectedType
+      wantErr  bool
+  }{ /* cases */ }
+  for _, tc := range tests {
+      t.Run(tc.name, func(t *testing.T) {
+          t.Parallel() // MANDATORY as first statement
+          // ... test logic
+      })
+  }
+  ```
+- **`t.Parallel()` (MANDATORY)**: Every `t.Run` sub-test MUST call `t.Parallel()` as its first statement. Top-level test functions that own only parallel sub-tests SHOULD also call `t.Parallel()`.
 - Name tests descriptively using `Test_functionName_scenario`
-- Use subtests with `t.Run` for better organization
 - Test both success and error cases
+- Every service and repository function MUST have tests covering happy path, edge cases, and error paths
 - Consider using `testify` or similar libraries when they add value, but don't over-complicate simple tests
 
 ### Test Helpers
@@ -299,6 +424,20 @@ Follow idiomatic Go practices and community standards when writing Go code. Thes
 - Create test fixtures for complex setup
 - Use `testing.TB` interface for functions used in tests and benchmarks
 - Clean up resources using `t.Cleanup()`
+
+## Observability 
+
+### Structured Logging
+
+- Use **zerolog** for structured JSON logging
+- Every log entry MUST include: `timestamp`, `level`, `event`, and where applicable `user_id`, `trace_id`
+- Use appropriate log levels: `error` for failures, `warn` for degraded state, `info` for significant events, `debug` for development
+
+### Tracing & Metrics
+
+- OpenTelemetry traces MUST be wired from day one
+- Prometheus-compatible metrics MUST be exposed
+- Setup lives in `pkg/platform/otel/otel.go`
 
 ## Security Best Practices
 
