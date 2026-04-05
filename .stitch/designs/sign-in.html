@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Sign In | Investment Intel</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary-fixed": "#69f6b8",
+                        "primary-container": "#f59e0a",
+                        "error": "#f97758",
+                        "background": "#060e20",
+                        "on-primary-fixed-variant": "#563400",
+                        "surface": "#060e20",
+                        "secondary-fixed-dim": "#ddcdff",
+                        "on-tertiary-fixed-variant": "#006544",
+                        "on-error-container": "#ff9b82",
+                        "on-background": "#dee5ff",
+                        "on-secondary": "#4e03b8",
+                        "on-tertiary": "#006443",
+                        "on-primary-fixed": "#2a1700",
+                        "primary-fixed": "#f8a010",
+                        "surface-variant": "#11244c",
+                        "secondary": "#d0bcff",
+                        "surface-container-low": "#06122c",
+                        "error-dim": "#c44f34",
+                        "surface-container-highest": "#11244c",
+                        "on-error": "#450900",
+                        "inverse-on-surface": "#4d556b",
+                        "surface-dim": "#060e20",
+                        "on-secondary-fixed-variant": "#6a37d4",
+                        "surface-tint": "#ffb95f",
+                        "tertiary-dim": "#58e7ab",
+                        "primary-dim": "#f8a010",
+                        "on-secondary-container": "#cab3ff",
+                        "secondary-dim": "#8455ef",
+                        "on-tertiary-container": "#005a3c",
+                        "tertiary-container": "#69f6b8",
+                        "outline": "#6475a1",
+                        "tertiary": "#9bffce",
+                        "surface-container-lowest": "#000000",
+                        "on-secondary-fixed": "#4d00b7",
+                        "error-container": "#85230a",
+                        "on-surface": "#dee5ff",
+                        "on-surface-variant": "#99aad9",
+                        "on-primary-container": "#472a00",
+                        "secondary-container": "#4900ad",
+                        "surface-bright": "#182b52",
+                        "on-primary": "#5c3800",
+                        "primary-fixed-dim": "#e79400",
+                        "primary": "#ffb95f",
+                        "on-tertiary-fixed": "#00452d",
+                        "inverse-primary": "#865400",
+                        "outline-variant": "#364770",
+                        "inverse-surface": "#faf8ff",
+                        "surface-container-high": "#0f1e3f",
+                        "surface-container": "#0a1836",
+                        "tertiary-fixed-dim": "#58e7ab",
+                        "secondary-fixed": "#e9ddff"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .bg-crypto-gradient {
+            background: radial-gradient(circle at top left, #f59e0b22, transparent),
+                        radial-gradient(circle at bottom right, #8b5cf622, transparent),
+                        linear-gradient(135deg, #060e20 0%, #0a1836 100%);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body min-h-screen flex flex-col">
+<!-- TopNavBar (Suppressed for transactional layout but kept for identity as requested) -->
+<nav class="fixed top-0 w-full z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 shadow-xl flex justify-between items-center px-6 py-4 font-['Space_Grotesk'] antialiased">
+<div class="text-2xl font-bold tracking-tight text-amber-500">
+            Investment Intel
+        </div>
+<div class="flex items-center gap-6">
+<button class="text-slate-400 hover:text-amber-400 transition-colors active:scale-95 duration-150">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+</button>
+<button class="text-slate-400 hover:text-amber-400 transition-colors active:scale-95 duration-150">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+</div>
+</nav>
+<main class="flex-grow flex flex-col md:flex-row pt-16">
+<!-- Left Side: Hero Area -->
+<section class="hidden md:flex md:w-1/2 relative overflow-hidden bg-crypto-gradient items-center justify-center p-12">
+<div class="absolute inset-0 opacity-20" data-alt="abstract flowing 3d digital waves with golden particles and purple light streaks on a dark obsidian background">
+<img alt="" class="w-full h-full object-cover" data-alt="high-tech 3d visualization of crypto market data flows with golden sparks and deep violet light trails" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCfbrF4FloMTMr9u3NaHo_YM0z6JxkC0ltJf_GYoMMBLYoDYj1qbL0JFQbjmpKkqG64OpRGpINcuwCTzNBAWFbrZYM4O0NPNbjwCX0lhc94x5jdRjageAfBMCY6p3I8vZwSPfYdioy2yaMEJxGkQ_KNrrv08aUwX-bM5Ih__zJH1wb9FRvjhn6_KN72FrCjV6iPDjyC3gmb5hXQsn-amw_7VZIG56UvVspAU2LFvXfAem-faUJVgsUHAwVyxvy8qaiz23Da9FQrTczo"/>
+</div>
+<div class="relative z-10 max-w-lg text-center">
+<div class="mb-8 inline-block p-4 rounded-xl bg-surface-variant/50 border border-outline-variant backdrop-blur-sm">
+<span class="material-symbols-outlined text-primary text-6xl" data-icon="monitoring" style="font-variation-settings: 'FILL' 1;">monitoring</span>
+</div>
+<h1 class="font-headline text-5xl font-bold tracking-tight text-primary mb-6">
+                    Investment Intel
+                </h1>
+<p class="font-headline text-2xl text-on-surface-variant font-light leading-relaxed">
+                    AI-Powered Crypto Signal Intelligence
+                </p>
+<div class="mt-12 flex justify-center gap-4">
+<div class="h-1 w-12 bg-primary rounded-full"></div>
+<div class="h-1 w-12 bg-secondary/30 rounded-full"></div>
+<div class="h-1 w-12 bg-secondary/30 rounded-full"></div>
+</div>
+</div>
+</section>
+<!-- Right Side: Sign-In Form -->
+<section class="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 bg-[#0F172A]">
+<div class="w-full max-w-md space-y-8">
+<div class="text-center md:text-left">
+<h2 class="font-headline text-3xl font-bold text-on-surface mb-2">Welcome Back</h2>
+<p class="text-on-surface-variant">Access your high-frequency trading intelligence.</p>
+</div>
+<form class="space-y-6">
+<div class="space-y-2">
+<label class="block text-sm font-medium text-on-surface-variant ml-1" for="email">Email Address</label>
+<div class="relative">
+<span class="absolute inset-y-0 left-0 pl-4 flex items-center text-outline">
+<span class="material-symbols-outlined text-sm" data-icon="mail">mail</span>
+</span>
+<input class="block w-full pl-11 pr-4 py-3 bg-[#1E293B] border border-slate-700 rounded-lg text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder:text-slate-500" id="email" name="email" placeholder="name@company.com" type="email"/>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between items-center ml-1">
+<label class="block text-sm font-medium text-on-surface-variant" for="password">Password</label>
+<a class="text-sm font-semibold text-[#8B5CF6] hover:text-[#a78bfa] transition-colors" href="#">Forgot password?</a>
+</div>
+<div class="relative">
+<span class="absolute inset-y-0 left-0 pl-4 flex items-center text-outline">
+<span class="material-symbols-outlined text-sm" data-icon="lock">lock</span>
+</span>
+<input class="block w-full pl-11 pr-12 py-3 bg-[#1E293B] border border-slate-700 rounded-lg text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder:text-slate-500" id="password" name="password" placeholder="••••••••" type="password"/>
+<button class="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-500 hover:text-on-surface transition-colors" type="button">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</button>
+</div>
+</div>
+<div class="flex items-center">
+<input class="h-4 w-4 rounded border-slate-700 bg-slate-800 text-primary focus:ring-primary" id="remember-me" name="remember-me" type="checkbox"/>
+<label class="ml-2 block text-sm text-on-surface-variant" for="remember-me">Remember device for 30 days</label>
+</div>
+<button class="w-full py-3.5 px-4 bg-[#F59E0B] hover:bg-[#d98b06] text-on-primary-fixed font-bold rounded-lg shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all active:scale-[0.98]" type="submit">
+                        Sign In
+                    </button>
+</form>
+<div class="relative">
+<div class="absolute inset-0 flex items-center">
+<div class="w-full border-t border-slate-800"></div>
+</div>
+<div class="relative flex justify-center text-sm">
+<span class="px-4 bg-[#0F172A] text-slate-500">or</span>
+</div>
+</div>
+<div class="grid grid-cols-1 gap-4">
+<button class="flex items-center justify-center gap-3 w-full py-3 px-4 bg-surface-container-high border border-outline-variant rounded-lg hover:bg-surface-bright transition-colors text-on-surface">
+<span class="material-symbols-outlined text-lg" data-icon="fingerprint">fingerprint</span>
+                        Sign in with Biometrics
+                    </button>
+</div>
+<p class="text-center text-on-surface-variant">
+                    Don't have an account? 
+                    <a class="font-bold text-primary hover:text-primary-dim transition-colors ml-1" href="#">Sign Up</a>
+</p>
+</div>
+</section>
+</main>
+<!-- Footer -->
+<footer class="w-full py-8 mt-auto bg-slate-950 border-t border-slate-800 font-['Space_Grotesk'] text-sm">
+<div class="flex flex-col md:flex-row justify-between items-center px-8 max-w-7xl mx-auto gap-4">
+<div class="text-lg font-bold text-amber-500">
+                Investment Intel
+            </div>
+<div class="text-slate-500 text-center md:text-left">
+                © 2024 Investment Intel. Built for the future of crypto.
+            </div>
+<div class="flex gap-6">
+<a class="text-slate-500 hover:text-violet-400 transition-colors opacity-80 hover:opacity-100" href="#">Privacy Policy</a>
+<a class="text-slate-500 hover:text-violet-400 transition-colors opacity-80 hover:opacity-100" href="#">Terms of Service</a>
+<a class="text-slate-500 hover:text-violet-400 transition-colors opacity-80 hover:opacity-100" href="#">Security</a>
+</div>
+</div>
+</footer>
+</body></html>

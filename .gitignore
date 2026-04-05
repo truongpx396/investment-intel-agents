@@ -1,0 +1,42 @@
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE / editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temp / logs
+/tmp/
+*.log
+*.tmp
+
+# Secrets / keys (extra safety net)
+*.key
+*.pem
+*.p12
+*.pfx
+*.cer
+*.crt

@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "notionApi": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        "NOTION_TOKEN": "${NOTION_TOKEN}"
+      }
+    },
+    "stitch": {
+      "command": "npx",
+      "args": ["-y", "stitch-mcp"],
+      "env": {
+        "GOOGLE_CLOUD_PROJECT": "${env:GOOGLE_CLOUD_PROJECT}",
+        "PATH": "${env:HOME}/google-cloud-sdk/bin:${env:PATH}"
+      }
+    }
+  }
+}
