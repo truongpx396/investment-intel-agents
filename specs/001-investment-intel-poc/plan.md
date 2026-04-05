@@ -39,8 +39,12 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
   exhaustion). Abstracted behind `NewsProvider` interface in `ai-service/src/news/`.
 - **Market data feed**: CoinGecko Free API (no key required, ≤30 req/min) for spot price and
   percentage-change signals; CryptoCompare `histominute` endpoint (free tier, 100k req/month)
-  for intraday OHLCV data required by the 14-period RSI calculation. Both abstracted behind
-  `pkg/marketdata.Provider` interface.
+  for intraday OHLCV data forwarded to Python ai-service for indicator computation. Go adapter
+  abstracted behind `pkg/marketdata.Provider`; RSI and OHLCV math happens in Python.
+- **Technical indicators**: `pandas-ta` (RSI, MACD, Bollinger) + `numpy` — owned entirely by
+  Python ai-service; Go signal evaluator calls `POST /indicators/{asset}` to get pre-computed values
+- **News sentiment**: `vaderSentiment` (POC) — fast, CPU-only; scores news headlines before GoClaw
+  LLM step; reduces token waste on low-signal or duplicate items
 - **Logging**: zerolog (Go), structlog (Python)
 - **Monitoring**: Prometheus + Grafana
 
@@ -118,6 +122,65 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 
 ---
 
+## Service Responsibility Matrix
+
+A single authoritative reference for which service owns each concern. When in doubt, consult this table before placing code.
+
+### Ownership by Concern
+
+| Concern | Owner | Rationale |
+|---|---|---|
+| REST API (auth, strategies, alerts, watchlist, billing, admin) | **Go backend** | Strongly-typed, high-throughput HTTP; all user-facing CRUD and business logic |
+| JWT validation & user-context injection | **Go backend** | Supabase public-key verification at the edge of the Go service; no other service touches auth tokens |
+| Signal evaluation loop (30 s ticker, price threshold, % change, RSI trigger check) | **Go backend** | Orchestrates the tick; fetches pre-computed indicator values from ai-service; evaluates threshold rules; publishes to NATS — latency-sensitive hot path |
+| Market data fetching (CoinGecko spot price, CryptoCompare OHLCV) | **Go backend** (`pkg/marketdata/`) | Raw data fetch stays in Go; OHLCV slices are forwarded to ai-service for indicator computation |
+| **Technical indicator computation (RSI, OHLCV stats)** | **Python ai-service** | `pandas-ta` / `numpy` vectorised math; zero-effort 14-period RSI vs hand-rolled Go; result cached in Redis at 25 s TTL; Go evaluator calls `GET /indicators/{asset}` per tick |
+| **News fetching & `NewsProvider` interface** | **Python ai-service** | CryptoPanic + DuckDuckGo fallback; async `httpx`; quota tracking; `GET /news/{slug}` |
+| **News sentiment scoring & deduplication** | **Python ai-service** | `transformers` (FinBERT) or VADER for headline sentiment; deduplication before GoClaw summarisation; `POST /enrich/news` |
+| **Curated project registry** | **Python ai-service** | Slug → `{display_name, symbol, coingecko_id}` map; `GET /projects`; single source of truth for both React watchlist and GoClaw skill |
+| NATS publish/subscribe (signal events, alert queue, DLQ) | **Go backend** | All real-time event flow is Go-owned; GoClaw and ai-service do NOT touch NATS |
+| Alert persistence & Telegram delivery (real-time) | **Go backend** | Direct Telegram Bot API call for < 60 s latency; GoClaw's scheduler is too coarse for real-time |
+| Telegram account linking (deep-link, webhook, bot token) | **Go backend** | Stateful linking flow requires Postgres writes; linked to auth middleware |
+| Stripe checkout, webhook processing, subscription gating | **Go backend** | Financial operations require transaction safety and webhook signature validation |
+| PostgreSQL migrations | **Go backend** (`migrations/`, `golang-migrate`) | Single migration runner owns schema; GoClaw uses `gc_` prefix namespace only |
+| Daily digest orchestration (cron, fetch, summarise, send) | **GoClaw** | Built-in `cron`, `web_fetch`, LLM provider, and `message` tools; calls ai-service `GET /news/{slug}` and `POST /enrich/news` |
+| LLM summarisation (claude-3-5-haiku) | **GoClaw** | LLM provider configured natively in GoClaw; enriched + deduplicated news items from ai-service are the input |
+| Telegram digest delivery | **GoClaw** | GoClaw Telegram channel; separate from Go alert dispatcher |
+| Per-user agent context & watchlist retrieval | **GoClaw → Go `/internal/` API** | GoClaw skill calls Go's `/internal/watchlist` using service token (T057a) |
+| UI (all configuration, history, settings, billing pages) | **React SPA** | Single-page app via Cloudflare CDN; all data via TanStack Query → Go REST API |
+| Design system primitives & component stories | **React SPA** (Storybook) | Co-located `*.stories.tsx`; visual baseline and living docs |
+| Routing, TLS termination, rate limiting | **Traefik** | Handles `api.`, `app.`, `goclaw.` subdomains; services never terminate TLS directly |
+| Metrics exposure & tracing | **Go backend** + **GoClaw** (OTLP) + **ai-service** (`/metrics`) | All three expose Prometheus metrics; GoClaw emits OTLP traces |
+
+### Cross-Service Communication Rules
+
+| From | To | Protocol | Auth |
+|---|---|---|---|
+| React SPA | Go backend | HTTPS REST (`/api/v1/`) | Supabase JWT (httpOnly cookie) |
+| GoClaw digest agent | Go backend | HTTPS REST (`/internal/`) | Static bearer token (`GOCLAW_INTERNAL_TOKEN`) |
+| GoClaw digest agent | Python ai-service | `web_fetch` via `GET /news/{slug}`, `POST /enrich/news`, `GET /projects` | None (internal network only) |
+| Go backend (signal evaluator) | Python ai-service | HTTP `GET /indicators/{asset}` | None (internal network only) |
+| Go backend | NATS JetStream | NATS protocol | NATS credentials |
+| Go backend | Telegram Bot API | HTTPS | Bot token |
+| GoClaw | Telegram (digest) | GoClaw Telegram channel | GoClaw bot token (`GOCLAW_TELEGRAM_BOT_TOKEN`) |
+| Go backend | Supabase (Auth + DB) | HTTPS + postgres:// | Supabase service role key + RLS |
+| Go backend | Stripe | HTTPS | Stripe secret key + webhook signing secret |
+| Go backend | CoinGecko / CryptoCompare | HTTPS | No key / free-tier key |
+| Python ai-service | CryptoPanic | HTTPS | API token |
+| Python ai-service | Redis | redis:// | Password (internal) |
+
+### What Each Service MUST NOT Do
+
+| Service | Must NOT |
+|---|---|
+| **Go backend** | Call LLM APIs directly; run digest orchestration; compute technical indicators (delegate to ai-service); write to `gc_` schema tables |
+| **Python ai-service** | Evaluate signal threshold rules (that logic stays in Go); touch NATS; send Telegram messages; own any user-facing Postgres tables |
+| **GoClaw** | Connect to NATS; perform real-time alert dispatch; own Postgres migrations; compute indicators directly |
+| **React SPA** | Call market data or news APIs directly; store secrets; implement business logic |
+| **Traefik** | Contain application logic; be aware of NATS or GoClaw internals |
+
+---
+
 ## GoClaw Agent Architecture
 
 GoClaw (`github.com/nextlevelbuilder/goclaw`) replaces bespoke Python orchestration for the AI
@@ -183,12 +246,30 @@ investment-intel/
 │
 ├── ai-service/                      # Python AI/data service
 │   ├── src/
-│   │   ├── news/                    # Crypto news API adapter (interface + impl)
-│   │   └── health.py                # Health endpoint
+│   │   ├── main.py                  # FastAPI app factory; mounts routers; configures logging
+│   │   ├── config.py                # Settings via pydantic-settings (env vars, .env)
+│   │   ├── health.py                # GET /health (liveness) + GET /health/ready (readiness)
+│   │   ├── news/
+│   │   │   ├── provider.py          # Abstract NewsProvider + NewsItem dataclass
+│   │   │   ├── cryptopanic.py       # CryptoPanic adapter (primary)
+│   │   │   ├── duckduckgo.py        # DuckDuckGo fallback adapter
+│   │   │   ├── router.py            # GET /news/{project_slug}
+│   │   │   └── quota.py             # Daily quota counter (Redis-backed)
+│   │   ├── indicators/
+│   │   │   ├── router.py            # GET /indicators/{asset} — returns RSI + price stats
+│   │   │   ├── rsi.py               # 14-period RSI via pandas-ta (vectorised)
+│   │   │   ├── price_stats.py       # 24 h OHLCV summary (open/high/low/close/pct_change)
+│   │   │   └── cache.py             # Redis-backed indicator cache (TTL = 25 s, under 30 s poll)
+│   │   ├── enrichment/
+│   │   │   ├── sentiment.py         # News headline sentiment scoring (transformers/VADER)
+│   │   │   └── router.py            # POST /enrich/news — scores + deduplicates news items
+│   │   └── projects/
+│   │       ├── registry.py          # Static slug→{display_name, symbol, coingecko_id} map
+│   │       └── router.py            # GET /projects — curated project list
 │   └── tests/
-│       ├── contract/
-│       ├── integration/
-│       └── unit/
+│       ├── contract/                # HTTP contract tests (all endpoints)
+│       ├── integration/             # Redis, CryptoPanic, indicator pipeline tests
+│       └── unit/                    # Adapter parsing, RSI math, sentiment, quota logic
 │
 ├── goclaw/                          # GoClaw agent configuration
 │   ├── agents/
@@ -282,6 +363,36 @@ Key findings to carry into implementation:
 - RSI requires `/coins/{id}/ohlc` endpoint (returns up to 30 days of OHLC at 4h resolution);
   for intraday RSI, use CryptoCompare `histominute` endpoint (free tier: 100k req/month)
 - Abstracted behind `pkg/marketdata.Provider` interface — swap without changing signal evaluator
+
+### Python ai-service Design
+
+**Why Python owns indicator computation:**
+- `pandas-ta` computes 14-period RSI in one line on a DataFrame — no hand-rolled Wilder smoothing needed
+- `numpy` vectorises OHLCV aggregation (24 h open/high/low/close/pct_change) trivially
+- Result is cached in Redis at TTL = 25 s (safely under the 30 s poll cycle); Go evaluator calls `GET /indicators/{asset}` and receives a pre-computed struct — no OHLCV slice management in Go
+- Adding MACD, Bollinger Bands, or volume spike indicators post-POC is a one-line change in Python vs a significant Go implementation effort
+
+**Why Python owns news enrichment:**
+- `transformers` (FinBERT) or `vaderSentiment` for headline sentiment scoring is 3 lines in Python
+- Deduplication (URL hash + title fuzzy-match) prevents GoClaw LLM from wasting tokens on repeated headlines
+- `POST /enrich/news` input: `list[NewsItem]` → output: `list[EnrichedNewsItem]` with `sentiment_score`, `is_duplicate` flag
+- GoClaw receives already-enriched, deduplicated items — LLM prompt is shorter, output quality is higher
+
+**Indicator cache design:**
+- Redis key: `indicators:{asset}:{YYYY-MM-DD-HH-MM}` rounded to nearest 25 s, TTL = 30 s
+- Go evaluator: on cache hit → use cached value; on cache miss → ai-service fetches OHLCV, computes, stores, returns
+- Prevents duplicate CryptoCompare API calls when multiple strategies evaluate in the same tick
+
+**Python dependency stack:**
+- `fastapi` + `uvicorn` — async HTTP
+- `httpx` — async external API calls
+- `pandas` + `pandas-ta` — indicator computation
+- `numpy` — OHLCV aggregation
+- `transformers` + `torch` (CPU-only, small model) OR `vaderSentiment` — sentiment; choose VADER for POC (no GPU needed, fast, good enough for headlines)
+- `redis[asyncio]` — async Redis client
+- `pydantic-settings` — config management
+- `structlog` — JSON structured logging
+- `pytest` + `pytest-asyncio` + `httpx` (test client) — testing
 
 ### Crypto News API
 - **Selected for POC**: CryptoPanic free tier (50 req/day per token, returns news by currency filter)
