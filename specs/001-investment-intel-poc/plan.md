@@ -65,6 +65,8 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 - Frontend: Vitest + React Testing Library + Playwright (E2E) + Storybook (component stories + `@storybook/test` interaction tests)
 - CI: GitHub Actions
 
+**Logging**: All services output JSON-structured logs to stdout via zerolog (Go), structlog (Python), and pino (Node.js). Log rotation is handled by the Docker daemon log driver (`json-file` with `max-size: 50m`, `max-file: 3`); no application-level rotation is needed.
+
 **Target Platform**: DigitalOcean Droplets (Linux/amd64) + Cloudflare DNS/CDN/WAF
 
 **Project Type**: Web service (React SPA + Go microservices + Python AI service + GoClaw agent gateway)
@@ -140,10 +142,10 @@ A single authoritative reference for which service owns each concern. When in do
 | JWT validation & user-context injection | **Go backend** | Supabase public-key verification at the edge of the Go service; no other service touches auth tokens |
 | Signal evaluation loop (30 s ticker, price threshold, % change, RSI trigger check) | **Go backend** | Orchestrates the tick; fetches pre-computed indicator values from ai-service; evaluates threshold rules; publishes to NATS — latency-sensitive hot path |
 | Market data fetching (CoinGecko spot price, CryptoCompare OHLCV) | **Go backend** (`pkg/marketdata/`) | Raw data fetch stays in Go; OHLCV slices are forwarded to ai-service for indicator computation |
-| **Technical indicator computation (RSI, volume SMA, MACD, Bollinger Bands, OHLCV stats)** | **Python ai-service** | `pandas-ta` / `numpy` vectorised math; zero-effort 14-period RSI, 20-period volume SMA ratio, MACD(12,26,9), Bollinger Bands(20,2) vs hand-rolled Go; accepts `candle_minutes` parameter to resample 1-min candles into the user-selected candle size (5/15/60 min) before computing indicators; result cached in Redis at 25 s TTL keyed by `{asset}:{candle_minutes}`; Go evaluator calls `POST /indicators/{asset}` per tick (OHLCV slice + `candle_minutes` in request body) |
+| **Technical indicator computation (RSI, volume SMA, MACD, Bollinger Bands, OHLCV stats, intraday % change)** | **Python ai-service** | `pandas-ta` / `numpy` vectorised math; zero-effort 14-period RSI, 20-period volume SMA ratio, MACD(12,26,9), Bollinger Bands(20,2) vs hand-rolled Go; accepts `candle_minutes` parameter to resample 1-min candles into the user-selected candle size (5/15/60 min) before computing indicators; result cached in Redis at 25 s TTL keyed by `{asset}:{candle_minutes}`; Go evaluator calls `POST /indicators/{asset}` (indicators) and `POST /pct_change/{asset}` (intraday % change — separate cache key by `window_minutes`) per tick |
 | **News fetching & `NewsProvider` interface** | **Python ai-service** | CryptoPanic + DuckDuckGo fallback; async `httpx`; quota tracking; `GET /news/{slug}` |
-| **News sentiment scoring & deduplication** | **Python ai-service** | `transformers` (FinBERT) or VADER for headline sentiment; deduplication before GoClaw summarisation; `POST /enrich/news` |
-| **Curated project registry** | **Python ai-service** | Slug → `{display_name, symbol, coingecko_id, quote_currency}` map; `GET /projects`; single source of truth for both React watchlist/strategy form and GoClaw skill; `quote_currency` (default `USD`) is consumed by Go market data adapters |
+| **News sentiment scoring & deduplication** | **Python ai-service** | `vaderSentiment` for headline sentiment; deduplication before GoClaw summarisation; `POST /enrich/news` |
+| **Curated project registry** | **Python ai-service** | **DB-backed**: reads from `app_projects` table (ai-service connects to shared Postgres in read-only mode); cached in-memory with 5 min TTL; `GET /projects` returns `{slug, display_name, symbol, coingecko_id, quote_currency, is_signal_asset}`; single source of truth for both React watchlist/strategy form and GoClaw skill; `quote_currency` (default `USD`) is consumed by Go market data adapters; adding a new project is a data-only change (visible within 5 min, no code deploy) |
 | NATS publish/subscribe (signal events, alert queue, DLQ) | **Go backend** | All real-time event flow is Go-owned; GoClaw and ai-service do NOT touch NATS |
 | Alert persistence & Telegram delivery (real-time) | **Go backend** | Direct Telegram Bot API call for < 60 s latency; GoClaw's scheduler is too coarse for real-time |
 | Telegram account linking (deep-link, webhook, bot token) | **Go backend** | Stateful linking flow requires Postgres writes; linked to auth middleware |
@@ -165,7 +167,7 @@ A single authoritative reference for which service owns each concern. When in do
 | React SPA | Go backend | HTTPS REST (`/api/v1/`) | Supabase JWT (httpOnly cookie) |
 | GoClaw digest agent | Go backend | HTTPS REST (`/internal/`) | Static bearer token (`GOCLAW_INTERNAL_TOKEN`) |
 | GoClaw digest agent | Python ai-service | `web_fetch` via `GET /news/{slug}`, `POST /enrich/news`, `GET /projects` | None (internal network only) |
-| Go backend (signal evaluator) | Python ai-service | HTTP `POST /indicators/{asset}` | None (internal network only) |
+| Go backend (signal evaluator) | Python ai-service | HTTP `POST /indicators/{asset}`, `POST /pct_change/{asset}` | None (internal network only) |
 | Go backend | NATS JetStream | NATS protocol | NATS credentials |
 | Go backend | Telegram Bot API | HTTPS | `TELEGRAM_BOT_TOKEN` (shared single bot) |
 | GoClaw | Telegram (digest) | GoClaw Telegram channel | Same `TELEGRAM_BOT_TOKEN` configured as `GOCLAW_TELEGRAM_BOT_TOKEN` |
@@ -254,7 +256,6 @@ The system uses **one Telegram bot** (`TELEGRAM_BOT_TOKEN`) shared between Go ba
 specs/001-investment-intel-poc/
 ├── plan.md              ← this file
 ├── research.md          ← GoClaw integration patterns, market data feed evaluation
-├── data-model.md        ← entity schemas, state machines
 ├── quickstart.md        ← local dev setup
 ├── contracts/
 │   ├── rest-api.md      ← REST endpoint contracts (auth, strategies, alerts, watchlist, digest)
@@ -276,8 +277,7 @@ investment-intel/
 │   │   ├── alerts/                  # Alert persistence, history queries
 │   │   ├── watchlist/               # Watchlist CRUD
 │   │   ├── telegram/                # Telegram account linking
-│   │   ├── billing/                 # Stripe subscription + webhook handler
-│   │   └── telegram/                # Telegram account linking
+│   │   └── billing/                 # Stripe subscription + webhook handler
 │   ├── pkg/
 │   │   ├── marketdata/              # Market data feed adapter (interface + impl)
 │   │   └── nats/                    # NATS publisher/subscriber helpers
@@ -307,10 +307,10 @@ investment-intel/
 │   │   │   ├── price_stats.py       # 24 h OHLCV summary (open/high/low/close/pct_change)
 │   │   │   └── cache.py             # Redis-backed indicator cache (TTL = 25 s, under 30 s poll)
 │   │   ├── enrichment/
-│   │   │   ├── sentiment.py         # News headline sentiment scoring (transformers/VADER)
+│   │   │   ├── sentiment.py         # News headline sentiment scoring (VADER)
 │   │   │   └── router.py            # POST /enrich/news — scores + deduplicates news items
 │   │   └── projects/
-│   │       ├── registry.py          # Static slug→{display_name, symbol, coingecko_id} map
+│   │       ├── registry.py          # DB-backed slug→{display_name, symbol, coingecko_id, quote_currency} map
 │   │       └── router.py            # GET /projects — curated project list
 │   └── tests/
 │       ├── contract/                # HTTP contract tests (all endpoints)
@@ -436,6 +436,7 @@ Key findings to carry into implementation:
   - `ALERT_QUEUE` stream: `alert.pending` + `alert.expired`, `LimitsPolicy`, `MaxAge 25h`, `FileStorage`, `Replicas 1`; consumer `alerts-redriver` with `MaxDeliver: 48`, `AckWait: 60s`
   - Both streams initialised explicitly on backend startup via `pkg/nats/` — do NOT rely on NATS auto-create defaults
   - `FileStorage` requires a named Docker volume (`nats-data:/data`) in both local and production compose files
+- Docker compose defines two explicit networks: `public` (Traefik, frontend, backend) and `internal` (backend, ai-service, GoClaw, NATS, Redis, Postgres); ai-service is on `internal` only — never exposed via Traefik
 - On signal fire: publish `signal.triggered.{asset}` to `SIGNALS` stream (subject is asset-keyed; user isolation enforced by `user_id` in payload); `alerts-dispatcher` persists Alert and calls Telegram Bot API directly (not via GoClaw — GoClaw handles digest only; real-time alerts go direct for latency); if user has no linked Telegram, dispatcher sets `telegram_status=Pending` and publishes `alert.pending` to `ALERT_QUEUE`
 - **Re-drive pattern (FR-025)**: `alerts-redriver` consumes `alert.pending`; if still unlinked calls `NakWithDelay(backoff)` — NATS redelivers the *same* message (no re-publish, no stream bloat); when `MaxDeliver` is exhausted NATS forwards message to `alert.expired` subject; lightweight DLQ handler sets `telegram_status=Expired`; 24 h expiry enforced by stream `MaxAge` as the authoritative safety net
 - **Circuit breaker on ai-service** (`sony/gobreaker`): the Go evaluator wraps all `POST /indicators/{asset}` and `POST /pct_change/{asset}` calls in a circuit breaker; after 5 consecutive failures (timeout or 5xx), the circuit opens for 30 s — all ai-service calls during this window return immediately with a sentinel error (tick is skipped, logged as warning, no alert fired); after 30 s the circuit half-opens and allows one probe request; if it succeeds, circuit closes and normal evaluation resumes; this prevents cascading timeouts when ai-service is degraded and preserves the 30 s tick budget for non-indicator signals (price threshold via CoinGecko still evaluates normally)
@@ -483,7 +484,7 @@ Key findings to carry into implementation:
 - All seven computations (RSI, volume spike, MACD, Bollinger Bands, price stats, intraday % change, 24 h stats) use the same `histominute` candle data and share the resample-then-compute pattern; Go never performs arithmetic on OHLCV data
 
 **Why Python owns news enrichment:**
-- `transformers` (FinBERT) or `vaderSentiment` for headline sentiment scoring is 3 lines in Python
+- `vaderSentiment` for headline sentiment scoring is 3 lines in Python
 - Deduplication (URL hash + title fuzzy-match) prevents GoClaw LLM from wasting tokens on repeated headlines
 - `POST /enrich/news` input: `list[NewsItem]` → output: `list[EnrichedNewsItem]` with `sentiment_score`, `is_duplicate` flag
 - GoClaw receives already-enriched, deduplicated items — LLM prompt is shorter, output quality is higher
@@ -499,7 +500,7 @@ Key findings to carry into implementation:
 - `httpx` — async external API calls
 - `pandas` + `pandas-ta` — indicator computation
 - `numpy` — OHLCV aggregation
-- `transformers` + `torch` (CPU-only, small model) OR `vaderSentiment` — sentiment; choose VADER for POC (no GPU needed, fast, good enough for headlines)
+- `vaderSentiment` — headline sentiment scoring (fast, CPU-only, no GPU needed; sufficient for POC)
 - `redis[asyncio]` — async Redis client
 - `pydantic-settings` — config management
 - `structlog` — JSON structured logging

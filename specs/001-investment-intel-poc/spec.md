@@ -179,10 +179,15 @@ strategy — without any notification or digest feature needing to be present.
 **Strategy & Signal Configuration**
 
 - **FR-001**: Users MUST be able to create, edit, activate, pause, and delete signal strategies
-  from the web app.
+  from the web app. Deleting a strategy MUST cascade-delete its `app_signal_rules` rows
+  (`ON DELETE CASCADE`). Historical `app_alerts` rows MUST be retained with `strategy_id` set
+  to NULL (`ON DELETE SET NULL`) so the alert history audit trail is preserved.
 - **FR-002**: Each strategy MUST be scoped to a single asset chosen from the curated project
   list (BTC and ETH seeded for POC; additional tokens can be added to `app_projects` without
   schema changes) and MUST contain at least one signal rule before it can be saved as active.
+  Strategy creation MUST reject any asset where `app_projects.is_signal_asset = FALSE`; this
+  prevents users from creating signal strategies for watchlist-only projects that lack market
+  data feed configuration.
   All price-denominated values (thresholds, trigger values, price-change calculations) MUST be
   quoted in the asset's configured `quote_currency` (default **USD** for all POC assets). The
   `quote_currency` is stored per project in `app_projects` and passed to market data adapters
@@ -290,7 +295,9 @@ strategy — without any notification or digest feature needing to be present.
 - **FR-018**: Users MUST be able to unlink their Telegram account at any time; unlinking MUST
   immediately halt all outbound Telegram messages for that user.
 - **FR-019**: If a Telegram link becomes broken (bot removed, chat blocked), the system MUST
-  detect this and surface a re-link prompt in the web app.
+  detect this and surface a re-link prompt in the web app. Detection is **reactive only** for
+  POC: a Telegram 403/blocked response during message delivery triggers the broken-link state.
+  Proactive periodic health-checking of linked Telegram accounts is deferred to post-POC.
 
 **General**
 
@@ -352,8 +359,10 @@ strategy — without any notification or digest feature needing to be present.
 
 - **NFR-SEC-001**: All protected API routes MUST require a valid Supabase-issued JWT; unauthenticated
   requests MUST receive a 401 response.
-- **NFR-SEC-002**: Row Level Security (RLS) MUST be enabled on all application tables; queries MUST
-  be scoped to the authenticated user's `user_id`.
+- **NFR-SEC-002**: Row Level Security (RLS) MUST be enabled on all user-scoped application
+  tables (`app_strategies`, `app_signal_rules`, `app_alerts`, `app_watchlist_entries`,
+  `app_users`); queries MUST be scoped to the authenticated user's `user_id`. Global reference
+  tables (`app_projects`) are public-read and do not require RLS.
 - **NFR-SEC-003**: Stripe webhook endpoints MUST validate the `Stripe-Signature` header; requests
   failing signature verification MUST be rejected with a 400 response.
 - **NFR-SEC-004**: API rate limiting MUST be enforced via Traefik middleware; authenticated users
@@ -362,8 +371,9 @@ strategy — without any notification or digest feature needing to be present.
 
 ### Performance
 
-- **NFR-PERF-001**: REST API endpoints MUST respond within 200 ms p95 under baseline load of
-  ≤ 50 concurrent users.
+- **NFR-PERF-001**: REST API endpoints MUST respond within 200 ms p95 under the POC baseline
+  load of ≤ 50 registered users generating typical interactive traffic (estimated peak ≤ 10
+  concurrent requests; each user averaging ≤ 2 req/s during active sessions).
 - **NFR-PERF-002**: React SPA pages MUST achieve LCP ≤ 2.5 s and CLS ≤ 0.1 on a median device
   profile when assets are served via Cloudflare CDN.
 - **NFR-PERF-003**: The signal evaluation loop MUST process all active strategies within each 30 s
@@ -371,8 +381,10 @@ strategy — without any notification or digest feature needing to be present.
 - **NFR-PERF-004**: The GoClaw digest agent MUST complete per-user digest generation and delivery
   within 5 minutes of the scheduled cron trigger; peak memory consumption MUST NOT exceed 512 MB.
   Throughput SLA: the pipeline MUST complete all digests for ≤ 50 users × ≤ 10 watchlist projects
-  each within the 5-minute window. Memory and throughput MUST be measured using Go pprof / runtime
-  metrics under the stated load profile during Phase 10 performance validation.
+  each within the 5-minute window. GoClaw is a third-party binary; measurement MUST use GoClaw's
+  built-in OTLP traces and Prometheus metrics (LLM call duration, `message` tool latency) rather
+  than Go pprof. Memory is measured via container runtime metrics (`docker stats` or cAdvisor)
+  during Phase 10 performance validation.
 - **NFR-PERF-005**: Performance regressions exceeding 10% against the established baseline MUST
   block merging until resolved, per constitution Principle IV.
 
@@ -459,5 +471,7 @@ strategy — without any notification or digest feature needing to be present.
 | **News Item** | A raw article or headline from the third-party news API, before LLM summarisation. |
 | **Enriched News Item** | A news item after sentiment scoring and deduplication by the Python ai-service. |
 | **Curated Project** | A crypto project (e.g., SOL, ARB) from the team-maintained registry available for watchlist selection. |
+| **Curated Project List** | The full set of `app_projects` entries returned by `GET /projects`; includes both signal assets and watchlist-only projects. |
+| **Signal Asset** | A curated project with `app_projects.is_signal_asset = TRUE`, meaning it has a configured market data feed (CoinGecko + CryptoCompare) and can be used as a strategy target. BTC and ETH are signal assets for POC. Projects with `is_signal_asset = FALSE` are available for the watchlist but cannot be used in signal strategies. |
 | **Quote Currency** | The fiat currency in which asset prices and thresholds are denominated. Stored per project in `app_projects.quote_currency`; defaults to `USD` for all POC assets. Market data adapters use this value (CoinGecko `vs_currencies`, CryptoCompare `tsym`). |
 | **Linking** | The process of connecting a user's web-app account to their Telegram chat via a bot deep-link. |
