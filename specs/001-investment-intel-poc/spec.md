@@ -384,6 +384,15 @@ strategy — without any notification or digest feature needing to be present.
 - **NFR-REL-002**: NATS JetStream consumers MUST use durable subscriptions with at-least-once
   delivery semantics; duplicate alert dispatch MUST be prevented via idempotency checks on
   `signal_rule_id + triggered_at` before persisting an `Alert` record.
+- **NFR-REL-003**: The Go evaluator's HTTP calls to ai-service MUST be protected by a circuit
+  breaker. After 5 consecutive failures (timeout or 5xx), the circuit opens for 30 seconds;
+  during this window, indicator-based and pct_change evaluations are skipped (logged as warning,
+  no alert fired). Price-threshold and CoinGecko 24h % change signals are NOT affected. After
+  30 s the circuit half-opens; a successful probe closes the circuit and resumes normal evaluation.
+- **NFR-REL-004**: On `SIGTERM` / `SIGINT` the Go backend MUST perform graceful shutdown: stop
+  the evaluation ticker, drain NATS connections (finish in-flight ACKs), close Redis and Postgres
+  pools, and stop the HTTP server with a 15-second deadline. This ensures zero-downtime deploys
+  and no lost NATS acknowledgements.
 
 ---
 
@@ -412,8 +421,11 @@ strategy — without any notification or digest feature needing to be present.
 - **A-001**: Asset price and signal data (RSI, volume, price) are sourced from a third-party
   market data feed that supports polling at ≤ 30-second intervals; the specific provider is
   selected at planning. Data acquisition implementation is out of scope for this spec.
-- **A-002**: The Telegram bot is registered and operational; bot setup is a deployment
-  prerequisite, not a feature to be built.
+- **A-002**: A **single** Telegram bot is registered and operational; bot setup is a deployment
+  prerequisite, not a feature to be built. The same bot token is used by Go backend (real-time
+  alerts + account linking webhook) and GoClaw (daily digest delivery via `sendMessage`).
+  Telegram delivers all inbound updates to Go backend's webhook endpoint; GoClaw only sends
+  outbound messages.
 - **A-003**: "Projects" available for the watchlist are limited to a curated list maintained by
   the team for the POC; a full asset search/discovery flow is out of scope.
 - **A-004**: User timezone defaults to UTC+0 if not explicitly set; timezone configuration UI

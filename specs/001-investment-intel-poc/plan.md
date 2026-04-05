@@ -44,6 +44,9 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
   abstracted behind `pkg/marketdata.Provider`; RSI and OHLCV math happens in Python. All price
   data is denominated in the asset's `quote_currency` from `app_projects` (default `USD`); the
   adapter passes this value as CoinGecko `vs_currencies` and CryptoCompare `tsym` parameters.
+- **Circuit breaker**: `sony/gobreaker` v2 — protects Go evaluator's HTTP calls to ai-service;
+  opens after 5 consecutive failures; half-open probe after 30 s; prevents cascading timeouts
+  when ai-service is degraded
 - **Technical indicators**: `pandas-ta` (RSI, MACD, Bollinger) + `numpy` — owned entirely by
   Python ai-service; Go signal evaluator calls `POST /indicators/{asset}` to get pre-computed values
 - **News sentiment**: `vaderSentiment` (POC) — fast, CPU-only; scores news headlines before GoClaw
@@ -148,7 +151,7 @@ A single authoritative reference for which service owns each concern. When in do
 | PostgreSQL migrations | **Go backend** (`migrations/`, `golang-migrate`) | Single migration runner owns schema; GoClaw uses `gc_` prefix namespace only |
 | Daily digest orchestration (cron, fetch, summarise, send) | **GoClaw** | Built-in `cron`, `web_fetch`, LLM provider, and `message` tools; calls ai-service `GET /news/{slug}` and `POST /enrich/news` |
 | LLM summarisation (claude-3-5-haiku) | **GoClaw** | LLM provider configured natively in GoClaw; enriched + deduplicated news items from ai-service are the input |
-| Telegram digest delivery | **GoClaw** | GoClaw Telegram channel; separate from Go alert dispatcher |
+| Telegram digest delivery | **GoClaw** | GoClaw Telegram channel; same bot as Go alert dispatcher (single bot, see §Single Telegram Bot below) |
 | Per-user agent context & watchlist retrieval | **GoClaw → Go `/internal/` API** | GoClaw skill calls Go's `/internal/watchlist` using service token (T057a) |
 | UI (all configuration, history, settings, billing pages) | **React SPA** | Single-page app via Cloudflare CDN; all data via TanStack Query → Go REST API |
 | Design system primitives & component stories | **React SPA** (Storybook) | Co-located `*.stories.tsx`; visual baseline and living docs |
@@ -164,13 +167,35 @@ A single authoritative reference for which service owns each concern. When in do
 | GoClaw digest agent | Python ai-service | `web_fetch` via `GET /news/{slug}`, `POST /enrich/news`, `GET /projects` | None (internal network only) |
 | Go backend (signal evaluator) | Python ai-service | HTTP `POST /indicators/{asset}` | None (internal network only) |
 | Go backend | NATS JetStream | NATS protocol | NATS credentials |
-| Go backend | Telegram Bot API | HTTPS | Bot token |
-| GoClaw | Telegram (digest) | GoClaw Telegram channel | GoClaw bot token (`GOCLAW_TELEGRAM_BOT_TOKEN`) |
+| Go backend | Telegram Bot API | HTTPS | `TELEGRAM_BOT_TOKEN` (shared single bot) |
+| GoClaw | Telegram (digest) | GoClaw Telegram channel | Same `TELEGRAM_BOT_TOKEN` configured as `GOCLAW_TELEGRAM_BOT_TOKEN` |
 | Go backend | Supabase (Auth + DB) | HTTPS + postgres:// | Supabase service role key + RLS |
 | Go backend | Stripe | HTTPS | Stripe secret key + webhook signing secret |
 | Go backend | CoinGecko / CryptoCompare | HTTPS | No key / free-tier key |
 | Python ai-service | CryptoPanic | HTTPS | API token |
 | Python ai-service | Redis | redis:// | Password (internal) |
+
+### Standardised Error Response Contract
+
+All Go backend REST API error responses MUST use a consistent JSON envelope. The schema MUST be documented in `contracts/rest-api.md` (T010a) and enforced in all contract tests:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "Human-readable description of the error",
+    "details": [
+      { "field": "window_minutes", "reason": "value 999 is not in allowed set {5, 15, 60, 240, 1440}" }
+    ]
+  }
+}
+```
+
+- `code`: Machine-readable error code (e.g., `VALIDATION_FAILED`, `NOT_FOUND`, `UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMITED`, `INTERNAL_ERROR`, `PAYMENT_REQUIRED`)
+- `message`: Human-readable, actionable (per constitution Principle III — no raw stack traces)
+- `details`: Optional array of field-level errors for validation failures; omitted for non-validation errors
+
+Python ai-service internal endpoints use the same envelope for consistency, though they are not user-facing.
 
 ### What Each Service MUST NOT Do
 
@@ -204,6 +229,20 @@ agent layer. Key features used in this POC:
 | **Built-in observability (OTLP)** | LLM call tracing feeds Prometheus/Grafana |
 
 **Deployment**: GoClaw runs as a **single Docker container** (one binary — web UI + API embedded, dashboard at `http://localhost:18790`) alongside backend services, connected to the shared Postgres and Redis instances. **No separate `goclaw-web` container is needed** (web UI was embedded into the Go binary in Apr 2026). NATS is not used by GoClaw directly — the Go signal service publishes to NATS; GoClaw operates on its own scheduler for digest tasks.
+
+### Single Telegram Bot Architecture
+
+The system uses **one Telegram bot** (`TELEGRAM_BOT_TOKEN`) shared between Go backend and GoClaw:
+
+| Responsibility | Owner | Mechanism |
+|---|---|---|
+| Account linking (`/start?token=`) | **Go backend** | Telegram webhook registered at `https://api.<domain>/telegram/webhook`; Go processes `/start` deep-link updates and linking confirmation messages |
+| Real-time alert delivery | **Go backend** | Direct `sendMessage` API call via bot token; latency-critical path (< 60 s SLA) |
+| Daily digest delivery | **GoClaw** | GoClaw Telegram channel configured with the same bot token (`GOCLAW_TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN`); uses `message` tool to call `sendMessage` |
+
+**Webhook routing**: Telegram delivers all bot updates (messages, commands) to the single registered webhook URL owned by Go backend. GoClaw never receives inbound updates — it only **sends** outbound messages via `sendMessage`. This avoids the Telegram limitation of one webhook per bot. The Go backend MUST filter webhook updates to only process `/start` commands for account linking; all other inbound messages are ignored (no command router needed for POC).
+
+**Configuration**: Both services read the same bot token from the environment. In `docker-compose.yml`, set `TELEGRAM_BOT_TOKEN` once and reference it in both Go backend and GoClaw service definitions (`GOCLAW_TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}`).
 
 ---
 
@@ -260,6 +299,7 @@ investment-intel/
 │   │   │   └── quota.py             # Daily quota counter (Redis-backed)
 │   │   ├── indicators/
 │   │   │   ├── router.py            # POST /indicators/{asset} — accepts OHLCV slice, returns RSI + volume spike + MACD + Bollinger + price stats
+│   │   │   ├── pct_change_router.py # POST /pct_change/{asset} — accepts OHLCV slice + window_minutes, returns pct_change (separate cache key)
 │   │   │   ├── rsi.py               # 14-period RSI via pandas-ta (vectorised)
 │   │   │   ├── volume_spike.py      # Volume spike: current vol vs 20-period SMA ratio via pandas-ta
 │   │   │   ├── macd.py              # MACD(12,26,9) crossover detection via pandas-ta
@@ -321,6 +361,25 @@ build/deploy pipelines. GoClaw runs as a fourth service using its own Docker ima
 
 ---
 
+## Database Index Strategy
+
+All indexes are created in the same migration as their parent table. Each index MUST include a comment explaining the query pattern it optimises.
+
+| Table | Index | Columns | Purpose |
+|---|---|---|---|
+| `app_strategies` | `idx_strategies_user_id` | `user_id` | Strategy list page: `WHERE user_id = $1` |
+| `app_strategies` | `idx_strategies_user_status` | `user_id, status` | Evaluator: `WHERE user_id = $1 AND status = 'Active'` |
+| `app_signal_rules` | `idx_signal_rules_strategy_id` | `strategy_id` | Join on strategy load |
+| `app_alerts` | `idx_alerts_user_created` | `user_id, triggered_at DESC` | Alert history page: reverse-chronological per user |
+| `app_alerts` | `idx_alerts_user_strategy` | `user_id, strategy_id, triggered_at DESC` | Alert history filtered by strategy |
+| `app_alerts` | `idx_alerts_idempotency` | `signal_rule_id, triggered_at` | **UNIQUE** — idempotency guard (NFR-REL-002); prevents duplicate Alert records |
+| `app_alerts` | `idx_alerts_pending_status` | `telegram_status` WHERE `telegram_status IN ('Pending', 'Failed')` | Re-drive worker and dashboard delay banner queries |
+| `app_watchlist_entries` | `idx_watchlist_user_id` | `user_id` | Watchlist page: `WHERE user_id = $1` |
+| `app_users` | `idx_users_email` | `email` | **UNIQUE** — enforced by Supabase Auth, but explicit index ensures fast lookup |
+| `app_users` | `idx_users_telegram_chat_id` | `telegram_chat_id` WHERE `telegram_chat_id IS NOT NULL` | Partial index for linking lookup |
+
+---
+
 ## Complexity Tracking
 
 No constitution violations — no entries required.
@@ -364,8 +423,12 @@ Key findings to carry into implementation:
   `candle_minutes=15` → 300 candles); ai-service resamples and computes Bollinger Bands via
   `pandas-ta.bbands()`
 - The maximum candle fetch for any signal type is MACD at `candle_minutes=60`: 35 × 60 = 2100
-  1-min candles — well within CryptoCompare `histominute` limits (max 2000 per call; may need
-  two calls for MACD at 60-min candles or reduce warm-up headroom to 34)
+  1-min candles — exceeds CryptoCompare `histominute` limit of 2000 per call. The adapter MUST
+  use two paginated calls for this case (first call: limit=2000, second call: remaining 100
+  candles with `toTs` set to the earliest timestamp from the first batch). Reducing warm-up
+  to 33 candles is NOT acceptable — the MACD signal line (period 9) requires all 35 candles
+  (26 slow EMA + 9 signal) for numerically stable values. All other signal type × candle size
+  combinations fit within a single 2000-candle call
 - Market data adapter must return the full rolling window, not just spot price
 - **Signal cooldown (anti-duplicate)**: before publishing to NATS, poller checks Redis key `cooldown:{signal_rule_id}` (default TTL 5 min, configurable via `SIGNAL_COOLDOWN_SECONDS`); if key present, suppress publish for this tick — prevents duplicate events when a condition stays true across multiple consecutive ticks and protects against alert spam
 - **NATS stream topology** (two streams — incompatible retention policies require separation):
@@ -375,6 +438,9 @@ Key findings to carry into implementation:
   - `FileStorage` requires a named Docker volume (`nats-data:/data`) in both local and production compose files
 - On signal fire: publish `signal.triggered.{asset}` to `SIGNALS` stream (subject is asset-keyed; user isolation enforced by `user_id` in payload); `alerts-dispatcher` persists Alert and calls Telegram Bot API directly (not via GoClaw — GoClaw handles digest only; real-time alerts go direct for latency); if user has no linked Telegram, dispatcher sets `telegram_status=Pending` and publishes `alert.pending` to `ALERT_QUEUE`
 - **Re-drive pattern (FR-025)**: `alerts-redriver` consumes `alert.pending`; if still unlinked calls `NakWithDelay(backoff)` — NATS redelivers the *same* message (no re-publish, no stream bloat); when `MaxDeliver` is exhausted NATS forwards message to `alert.expired` subject; lightweight DLQ handler sets `telegram_status=Expired`; 24 h expiry enforced by stream `MaxAge` as the authoritative safety net
+- **Circuit breaker on ai-service** (`sony/gobreaker`): the Go evaluator wraps all `POST /indicators/{asset}` and `POST /pct_change/{asset}` calls in a circuit breaker; after 5 consecutive failures (timeout or 5xx), the circuit opens for 30 s — all ai-service calls during this window return immediately with a sentinel error (tick is skipped, logged as warning, no alert fired); after 30 s the circuit half-opens and allows one probe request; if it succeeds, circuit closes and normal evaluation resumes; this prevents cascading timeouts when ai-service is degraded and preserves the 30 s tick budget for non-indicator signals (price threshold via CoinGecko still evaluates normally)
+- **Graceful shutdown**: on `SIGTERM` / `SIGINT` the backend MUST: (1) stop the 30 s evaluation ticker (no new ticks start), (2) drain NATS connections — finish in-flight message ACKs, then close consumers and publisher, (3) close Redis connection pool, (4) close Postgres connection pool, (5) stop HTTP server with `http.Server.Shutdown(ctx)` (deadline = 15 s); log each shutdown step; if any step exceeds deadline, force-close and log warning; this ensures zero-downtime deploys and no lost NATS ACKs
+- **ai-service readiness gate**: on startup the Go evaluator MUST poll `GET ai-service:8000/health/ready` with 2 s interval and 60 s overall timeout before starting the 30 s evaluation ticker; if ai-service is not ready within 60 s, the backend starts but logs a CRITICAL warning and skips indicator-based signal evaluation (price threshold + CoinGecko 24h % change still evaluate normally); the readiness check is also used by docker-compose `depends_on.condition: service_healthy`
 
 ### Market Data Feed
 - **Selected for POC**: CoinGecko Free API (no key required, 30 req/min — sufficient for 2 assets
@@ -383,6 +449,14 @@ Key findings to carry into implementation:
 - RSI requires `/coins/{id}/ohlc` endpoint (returns up to 30 days of OHLC at 4h resolution);
   for intraday RSI, use CryptoCompare `histominute` endpoint (free tier: 100k req/month)
 - Abstracted behind `pkg/marketdata.Provider` interface — swap without changing signal evaluator
+- **CryptoCompare request budget analysis** (POC worst-case per 30 s tick):
+  - Distinct `{asset, candle_minutes}` combos for indicators: 2 assets × 3 candle sizes = **6 calls**
+  - Distinct `{asset, window_minutes}` combos for pct_change: 2 assets × 4 windows (5,15,60,240) = **8 calls**
+  - MACD at `candle_minutes=60` requires 2 paginated calls per asset = **+2 extra calls**
+  - **Total worst-case per tick: 16 calls** → 16 × 2/min = **32 req/min** → **~1.38M req/month**
+  - CryptoCompare free tier: 100k req/month → **exceeds free tier if all combos are active simultaneously**
+  - **Mitigation**: (a) indicator cache (25 s TTL) means most ticks are cache hits, reducing actual calls to ~1-2 per tick for a small user base; (b) most POC users will use default `candle_minutes=15` — realistically 2-4 distinct combos, not 14; (c) upgrade to CryptoCompare paid tier ($0/month for 500k req) if needed; (d) batch multiple assets into one CryptoCompare call where API supports it (TODO: verify `histominute` multi-asset support)
+  - **Monitoring**: Track `cryptocompare_requests_total` Prometheus counter per tick; alert if approaching 80% of monthly budget
 - **Adapter routing by signal type and time window** (per FR-003):
   | Signal Type | Config field | Allowed values | Data Source | Method |
   |---|---|---|---|---|
@@ -415,10 +489,10 @@ Key findings to carry into implementation:
 - GoClaw receives already-enriched, deduplicated items — LLM prompt is shorter, output quality is higher
 
 **Indicator cache design:**
-- Redis key: `indicators:{asset}:{candle_minutes}:{YYYY-MM-DD-HH-MM}` rounded to nearest 25 s, TTL = 25 s; different `candle_minutes` values produce separate cache entries
+- **Indicator cache** (RSI, volume spike, MACD, Bollinger, price stats): Redis key `indicators:{asset}:{candle_minutes}:{YYYY-MM-DD-HH-MM}` rounded to nearest 25 s, TTL = 25 s; different `candle_minutes` values produce separate cache entries; cached response: `{ rsi, volume_spike_ratio, macd_line, macd_signal, macd_histogram, bb_upper, bb_mid, bb_lower, price_stats, quote_currency }`; a single cache entry serves RSI, volume-spike, MACD, and Bollinger rules sharing the same asset + candle size; price-denominated fields (`bb_upper`, `bb_mid`, `bb_lower`, `price_stats.*`) are in the asset's `quote_currency`
+- **Pct-change cache** (intraday % price change): Redis key `pct_change:{asset}:{window_minutes}:{YYYY-MM-DD-HH-MM}` rounded to nearest 25 s, TTL = 25 s; keyed by `window_minutes` (not `candle_minutes`) because the OHLCV slice size varies by window (e.g., 60 candles for 1 h vs. 840 candles for RSI at `candle_minutes=60`); cached response: `{ pct_change, quote_currency }`; separate endpoint `POST /pct_change/{asset}?window_minutes={wm}` to avoid overloading the indicator cache with incompatible slice sizes
 - Go evaluator: on cache hit → use cached value; on cache miss → ai-service fetches OHLCV, computes, stores, returns
 - Prevents duplicate CryptoCompare API calls when multiple strategies evaluate in the same tick
-- The cached response includes all indicator values computed for that candle size: `{ rsi, volume_spike_ratio, macd_line, macd_signal, macd_histogram, bb_upper, bb_mid, bb_lower, pct_change, price_stats, quote_currency }` — a single cache entry serves RSI, volume-spike, MACD, Bollinger, and intraday % change rules sharing the same asset + candle size; price-denominated fields (`bb_upper`, `bb_mid`, `bb_lower`, `price_stats.*`) are in the asset's `quote_currency`; `pct_change` is dimensionless (percentage)
 
 **Python dependency stack:**
 - `fastapi` + `uvicorn` — async HTTP
