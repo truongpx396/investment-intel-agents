@@ -20,7 +20,27 @@ feature work begins. No user story can be built without this foundation.
 - [ ] T002 [P] Bootstrap Go module in `backend/` (`go.mod`, `go.sum`, `golangci-lint` config, `Makefile`)
 - [ ] T003 [P] Bootstrap Python project in `ai-service/` (`pyproject.toml`, `uv.lock`, `ruff` config)
 - [ ] T004 [P] Bootstrap React project in `frontend/` (Vite + React 19, TailwindCSS v4, TanStack Router, TanStack Query, Vitest, Playwright, Storybook 8 with `@storybook/react-vite`); configure `.storybook/main.ts` with Vite builder and TailwindCSS; verify `npm run storybook` starts successfully
-- [ ] T005 [P] Configure GitHub Actions CI pipeline: lint + test gates for Go, Python, and React; run on every PR
+- [ ] T005 [P] Configure GitHub Actions CI pipeline — create the following workflow files under `.github/workflows/`:
+
+  **`ci-go.yml`** — triggers on `pull_request` and `push` to `main`; jobs:
+  - `lint`: `golangci-lint run ./...` (use `golangci-lint-action`)
+  - `test`: `go test ./... -race -coverprofile=coverage.out`; fail if coverage < 80% globally or < 95% on `internal/signals/`, `internal/alerts/`, `internal/auth/`, `internal/billing/`
+  - `build`: `go build ./cmd/server/` to catch compile errors on every PR
+
+  **`ci-python.yml`** — triggers on `pull_request` and `push` to `main`; jobs:
+  - `lint`: `ruff check .` and `ruff format --check .`
+  - `test`: `pytest --cov=src --cov-fail-under=80` inside `ai-service/`
+
+  **`ci-frontend.yml`** — triggers on `pull_request` and `push` to `main`; jobs:
+  - `lint`: `eslint . --max-warnings 0` + `tsc --noEmit`
+  - `test`: `vitest run --coverage` inside `frontend/`
+  - `storybook`: `npm run build-storybook` + `@storybook/test-runner` interaction tests (see T008a); archive Storybook build as a CI artefact
+  - `e2e` (Phase 10 gate, skipped until T073): `playwright test` — kept as a separate job so it can be enabled without touching other jobs
+
+  **`ci-migrations.yml`** — triggers on `pull_request` when files under `migrations/` change; jobs:
+  - `validate`: spin up Postgres 18 via service container, run `golang-migrate up` against it, assert exit 0
+
+  All workflows MUST use pinned action versions (e.g., `actions/checkout@v4`) and cache Go modules, pip, and npm dependencies for faster runs
 - [ ] T006 [P] Set up `docker-compose.yml` for local dev: Postgres 18 + pgvector, Redis 7, NATS JetStream, Traefik, GoClaw (`latest` image — web UI embedded, dashboard at `http://localhost:18790`), backend, ai-service, frontend, `prometheus-nats-exporter` — **no separate `goclaw-web` container** (Apr 2026: web UI is compiled into the Go binary); NATS service MUST mount a named volume (`nats-data:/data`) and enable JetStream with `FileStorage` configured (`--js --sd /data` flags or equivalent NATS config file) so that stream state persists across `docker compose restart`
 - [ ] T007 [P] Create initial PostgreSQL migration framework (`golang-migrate`); add `migrations/` directory with `001_init.sql` creating base schema namespaces (`app_`, `gc_`)
 - [ ] T008 [P] Define TailwindCSS design tokens (colours, spacing, typography) and create shared component primitives: `Button`, `Input`, `Card`, `Badge`, `Spinner`, `EmptyState`, `ErrorMessage`; each primitive MUST have a co-located `*.stories.tsx` file covering all variants (size, state, disabled, loading); Storybook stories serve as the living design-system documentation and visual baseline — **no primitive ships without a story**
