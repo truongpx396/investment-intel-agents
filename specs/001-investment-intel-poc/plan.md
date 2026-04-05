@@ -5,7 +5,8 @@
 
 ## Summary
 
-Build a POC platform where users self-register, configure rule-based signal strategies for BTC/ETH,
+Build a POC platform where users self-register, configure rule-based signal strategies for assets
+in the curated project list (BTC and ETH seeded for POC; additional tokens require only a data insert),
 and receive real-time Telegram notifications when conditions fire (< 60 s SLA via 30 s polling).
 Users maintain a watchlist of crypto projects and receive a daily AI-summarised Telegram digest
 (LLM summarises raw news from a third-party crypto news API) by 09:00 in their configured timezone.
@@ -40,7 +41,9 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 - **Market data feed**: CoinGecko Free API (no key required, ≤30 req/min) for spot price and
   percentage-change signals; CryptoCompare `histominute` endpoint (free tier, 100k req/month)
   for intraday OHLCV data forwarded to Python ai-service for indicator computation. Go adapter
-  abstracted behind `pkg/marketdata.Provider`; RSI and OHLCV math happens in Python.
+  abstracted behind `pkg/marketdata.Provider`; RSI and OHLCV math happens in Python. All price
+  data is denominated in the asset's `quote_currency` from `app_projects` (default `USD`); the
+  adapter passes this value as CoinGecko `vs_currencies` and CryptoCompare `tsym` parameters.
 - **Technical indicators**: `pandas-ta` (RSI, MACD, Bollinger) + `numpy` — owned entirely by
   Python ai-service; Go signal evaluator calls `POST /indicators/{asset}` to get pre-computed values
 - **News sentiment**: `vaderSentiment` (POC) — fast, CPU-only; scores news headlines before GoClaw
@@ -67,7 +70,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 - Signal-triggered Telegram notification: < 60 s end-to-end (30 s poll cycle + < 30 s delivery)
 - REST API endpoints: < 200 ms p95
 - React SPA: LCP ≤ 2.5 s, CLS ≤ 0.1 (Cloudflare CDN-served static assets)
-- Daily digest delivery: before 09:00 user-local time, 100% of days during POC
+- Daily digest delivery: before 09:00 UTC, 100% of days during POC (single-timezone cron at 08:30 UTC; per-user timezone scheduling is post-POC)
 
 **Constraints**:
 - POC scale: ≤ 50 registered users — no horizontal scaling required
@@ -75,7 +78,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 - Market data polling at 30 s intervals must stay within free-tier or low-cost API rate limits
 - Stripe integration limited to subscription creation and webhook processing (no custom invoicing)
 
-**Scale/Scope**: ≤ 50 users, 2 assets (BTC/ETH) for signals, curated watchlist of ~20 projects
+**Scale/Scope**: ≤ 50 users, 2 signal assets seeded for POC (BTC/ETH; extensible via `app_projects` — no schema migration needed to add tokens), curated watchlist of ~20 projects
 
 ---
 
@@ -116,7 +119,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 | p95 latency budget defined: REST API < 200 ms | ✅ PASS | Defined in Technical Context above |
 | Notification SLA defined: < 60 s | ✅ PASS | Defined in spec FR-006; 30 s poll cycle satisfies with headroom |
 | LCP ≤ 2.5 s, CLS ≤ 0.1 | ✅ PASS | Cloudflare CDN + code-split React bundles |
-| Background job SLA: digest before 09:00 UTC | ✅ PASS | GoClaw cron expression set to 08:30 UTC (delivers before cutoff) |
+| Background job SLA: digest before 09:00 UTC | ✅ PASS | GoClaw cron expression set to 08:30 UTC (delivers before cutoff); per-user timezone scheduling deferred to post-POC |
 
 **Constitution verdict**: ✅ ALL GATES PASS — no violations to justify.
 
@@ -134,10 +137,10 @@ A single authoritative reference for which service owns each concern. When in do
 | JWT validation & user-context injection | **Go backend** | Supabase public-key verification at the edge of the Go service; no other service touches auth tokens |
 | Signal evaluation loop (30 s ticker, price threshold, % change, RSI trigger check) | **Go backend** | Orchestrates the tick; fetches pre-computed indicator values from ai-service; evaluates threshold rules; publishes to NATS — latency-sensitive hot path |
 | Market data fetching (CoinGecko spot price, CryptoCompare OHLCV) | **Go backend** (`pkg/marketdata/`) | Raw data fetch stays in Go; OHLCV slices are forwarded to ai-service for indicator computation |
-| **Technical indicator computation (RSI, OHLCV stats)** | **Python ai-service** | `pandas-ta` / `numpy` vectorised math; zero-effort 14-period RSI vs hand-rolled Go; result cached in Redis at 25 s TTL; Go evaluator calls `GET /indicators/{asset}` per tick |
+| **Technical indicator computation (RSI, volume SMA, MACD, Bollinger Bands, OHLCV stats)** | **Python ai-service** | `pandas-ta` / `numpy` vectorised math; zero-effort 14-period RSI, 20-period volume SMA ratio, MACD(12,26,9), Bollinger Bands(20,2) vs hand-rolled Go; accepts `candle_minutes` parameter to resample 1-min candles into the user-selected candle size (5/15/60 min) before computing indicators; result cached in Redis at 25 s TTL keyed by `{asset}:{candle_minutes}`; Go evaluator calls `POST /indicators/{asset}` per tick (OHLCV slice + `candle_minutes` in request body) |
 | **News fetching & `NewsProvider` interface** | **Python ai-service** | CryptoPanic + DuckDuckGo fallback; async `httpx`; quota tracking; `GET /news/{slug}` |
 | **News sentiment scoring & deduplication** | **Python ai-service** | `transformers` (FinBERT) or VADER for headline sentiment; deduplication before GoClaw summarisation; `POST /enrich/news` |
-| **Curated project registry** | **Python ai-service** | Slug → `{display_name, symbol, coingecko_id}` map; `GET /projects`; single source of truth for both React watchlist and GoClaw skill |
+| **Curated project registry** | **Python ai-service** | Slug → `{display_name, symbol, coingecko_id, quote_currency}` map; `GET /projects`; single source of truth for both React watchlist/strategy form and GoClaw skill; `quote_currency` (default `USD`) is consumed by Go market data adapters |
 | NATS publish/subscribe (signal events, alert queue, DLQ) | **Go backend** | All real-time event flow is Go-owned; GoClaw and ai-service do NOT touch NATS |
 | Alert persistence & Telegram delivery (real-time) | **Go backend** | Direct Telegram Bot API call for < 60 s latency; GoClaw's scheduler is too coarse for real-time |
 | Telegram account linking (deep-link, webhook, bot token) | **Go backend** | Stateful linking flow requires Postgres writes; linked to auth middleware |
@@ -159,7 +162,7 @@ A single authoritative reference for which service owns each concern. When in do
 | React SPA | Go backend | HTTPS REST (`/api/v1/`) | Supabase JWT (httpOnly cookie) |
 | GoClaw digest agent | Go backend | HTTPS REST (`/internal/`) | Static bearer token (`GOCLAW_INTERNAL_TOKEN`) |
 | GoClaw digest agent | Python ai-service | `web_fetch` via `GET /news/{slug}`, `POST /enrich/news`, `GET /projects` | None (internal network only) |
-| Go backend (signal evaluator) | Python ai-service | HTTP `GET /indicators/{asset}` | None (internal network only) |
+| Go backend (signal evaluator) | Python ai-service | HTTP `POST /indicators/{asset}` | None (internal network only) |
 | Go backend | NATS JetStream | NATS protocol | NATS credentials |
 | Go backend | Telegram Bot API | HTTPS | Bot token |
 | GoClaw | Telegram (digest) | GoClaw Telegram channel | GoClaw bot token (`GOCLAW_TELEGRAM_BOT_TOKEN`) |
@@ -235,7 +238,7 @@ investment-intel/
 │   │   ├── watchlist/               # Watchlist CRUD
 │   │   ├── telegram/                # Telegram account linking
 │   │   ├── billing/                 # Stripe subscription + webhook handler
-│   │   └── digest/                  # Digest schedule coordination
+│   │   └── telegram/                # Telegram account linking
 │   ├── pkg/
 │   │   ├── marketdata/              # Market data feed adapter (interface + impl)
 │   │   └── nats/                    # NATS publisher/subscriber helpers
@@ -256,8 +259,11 @@ investment-intel/
 │   │   │   ├── router.py            # GET /news/{project_slug}
 │   │   │   └── quota.py             # Daily quota counter (Redis-backed)
 │   │   ├── indicators/
-│   │   │   ├── router.py            # GET /indicators/{asset} — returns RSI + price stats
+│   │   │   ├── router.py            # POST /indicators/{asset} — accepts OHLCV slice, returns RSI + volume spike + MACD + Bollinger + price stats
 │   │   │   ├── rsi.py               # 14-period RSI via pandas-ta (vectorised)
+│   │   │   ├── volume_spike.py      # Volume spike: current vol vs 20-period SMA ratio via pandas-ta
+│   │   │   ├── macd.py              # MACD(12,26,9) crossover detection via pandas-ta
+│   │   │   ├── bollinger.py         # Bollinger Bands(20,2) breach detection via pandas-ta
 │   │   │   ├── price_stats.py       # 24 h OHLCV summary (open/high/low/close/pct_change)
 │   │   │   └── cache.py             # Redis-backed indicator cache (TTL = 25 s, under 30 s poll)
 │   │   ├── enrichment/
@@ -346,8 +352,21 @@ Key findings to carry into implementation:
 ### Signal Evaluation
 - 30 s polling loop implemented as a Go ticker in `internal/signals/`; one goroutine per active
   strategy is wasteful at scale — evaluate all active strategies in a single pass per tick
-- RSI calculation requires at minimum 14 candles of OHLCV data; market data adapter must return
-  rolling window, not just spot price
+- RSI calculation requires `14 × candle_minutes` 1-minute candles from CryptoCompare (e.g.,
+  `candle_minutes=15` → 210 candles, `candle_minutes=60` → 840 candles); ai-service resamples
+  into 14 candles of the chosen size before computing RSI-14
+- Volume spike requires `20 × candle_minutes` 1-minute candles (e.g., `candle_minutes=15` → 300
+  candles); ai-service resamples into 20 candles and computes volume SMA + ratio
+- MACD crossover requires `35 × candle_minutes` 1-minute candles (e.g., `candle_minutes=15` →
+  525 candles); 35 candles covers slow EMA(26) + signal(9) warm-up; ai-service resamples and
+  computes MACD via `pandas-ta.macd()`
+- Bollinger Band breach requires `20 × candle_minutes` 1-minute candles (e.g.,
+  `candle_minutes=15` → 300 candles); ai-service resamples and computes Bollinger Bands via
+  `pandas-ta.bbands()`
+- The maximum candle fetch for any signal type is MACD at `candle_minutes=60`: 35 × 60 = 2100
+  1-min candles — well within CryptoCompare `histominute` limits (max 2000 per call; may need
+  two calls for MACD at 60-min candles or reduce warm-up headroom to 34)
+- Market data adapter must return the full rolling window, not just spot price
 - **Signal cooldown (anti-duplicate)**: before publishing to NATS, poller checks Redis key `cooldown:{signal_rule_id}` (default TTL 5 min, configurable via `SIGNAL_COOLDOWN_SECONDS`); if key present, suppress publish for this tick — prevents duplicate events when a condition stays true across multiple consecutive ticks and protects against alert spam
 - **NATS stream topology** (two streams — incompatible retention policies require separation):
   - `SIGNALS` stream: `signal.triggered.>`, `WorkQueuePolicy` (auto-delete on ACK), `MaxAge 1h`, `FileStorage`, `Replicas 1`; consumer `alerts-dispatcher` with `MaxAckPending: 100` (flow-control ceiling)
@@ -359,18 +378,35 @@ Key findings to carry into implementation:
 
 ### Market Data Feed
 - **Selected for POC**: CoinGecko Free API (no key required, 30 req/min — sufficient for 2 assets
-  at 30 s poll interval = 4 req/min)
+  at 30 s poll interval = 4 req/min; adding more tokens scales linearly — each new asset adds
+  ~2 req/min; free-tier headroom supports up to ~7 assets at 30 s polling)
 - RSI requires `/coins/{id}/ohlc` endpoint (returns up to 30 days of OHLC at 4h resolution);
   for intraday RSI, use CryptoCompare `histominute` endpoint (free tier: 100k req/month)
 - Abstracted behind `pkg/marketdata.Provider` interface — swap without changing signal evaluator
+- **Adapter routing by signal type and time window** (per FR-003):
+  | Signal Type | Config field | Allowed values | Data Source | Method |
+  |---|---|---|---|---|
+  | Price threshold | — | N/A (spot) | CoinGecko `/simple/price?vs_currencies={quote_currency}` | Current spot price vs. threshold (quote currency from `app_projects.quote_currency`, default `usd`) |
+  | % price change | `window_minutes` | 5, 15, 60, 240 | CryptoCompare `histominute` (`tsym={quote_currency}`) | Fetch `window_minutes` 1-min candles → forward OHLCV slice to ai-service `pct_change` computation → Go evaluator compares returned % against threshold |
+  | % price change | `window_minutes` | 1440 (24 h) | CoinGecko `/simple/price?vs_currencies={quote_currency}` | `price_change_percentage_24h` field (currency-agnostic %; spot price in quote currency) |
+  | RSI | `candle_minutes` | 5, 15, 60 (default 15) | CryptoCompare `histominute` | Fetch `14 × candle_minutes` 1-min candles → resample → ai-service RSI |
+  | Volume spike | `candle_minutes` | 5, 15, 60 (default 15) | CryptoCompare `histominute` | Fetch `20 × candle_minutes` 1-min candles → resample → ai-service volume SMA ratio |
+  | MACD crossover | `candle_minutes` | 5, 15, 60 (default 15) | CryptoCompare `histominute` | Fetch `35 × candle_minutes` 1-min candles → resample → ai-service MACD |
+  | Bollinger Band breach | `candle_minutes` | 5, 15, 60 (default 15) | CryptoCompare `histominute` | Fetch `20 × candle_minutes` 1-min candles → resample → ai-service Bollinger Bands |
+  Go signal evaluator selects adapter based on `signal_type` + `window_minutes` / `candle_minutes` from each rule.
+  The evaluator resolves the strategy's `asset` slug to a CoinGecko coin ID (e.g., `btc` → `bitcoin`) via `app_projects.coingecko_id`; this lookup is cached in-memory on startup and refreshed every 5 min, so adding a new token to `app_projects` requires no code changes — only a data insert + evaluator cache refresh
 
 ### Python ai-service Design
 
 **Why Python owns indicator computation:**
-- `pandas-ta` computes 14-period RSI in one line on a DataFrame — no hand-rolled Wilder smoothing needed
+- `pandas-ta` computes 14-period RSI in one line on a DataFrame — no hand-rolled Wilder smoothing needed; `pandas` `resample()` converts 1-min candles to user-selected candle size (5/15/60 min) before indicator computation
+- Volume spike detection: `pandas-ta.sma(volume, length=20)` gives the baseline; current volume / SMA ratio computed in one expression
+- MACD(12,26,9): `pandas-ta.macd()` returns MACD line, signal line, and histogram in one call
+- Bollinger Bands(20,2): `pandas-ta.bbands()` returns upper, mid, and lower bands in one call
 - `numpy` vectorises OHLCV aggregation (24 h open/high/low/close/pct_change) trivially
-- Result is cached in Redis at TTL = 25 s (safely under the 30 s poll cycle); Go evaluator calls `GET /indicators/{asset}` and receives a pre-computed struct — no OHLCV slice management in Go
-- Adding MACD, Bollinger Bands, or volume spike indicators post-POC is a one-line change in Python vs a significant Go implementation effort
+- **Intraday % price change** (`window_minutes` ≤ 240): ai-service receives the OHLCV slice, extracts `close` at index 0 (T − window) and `close` at the last index (current), computes `(current − old) / old × 100`; this keeps all OHLCV-derived math in Python and the Go evaluator simply compares the returned `pct_change` value against the user's threshold — same pattern as RSI/MACD/Bollinger
+- Result is cached in Redis at TTL = 25 s (safely under the 30 s poll cycle); Go evaluator calls `POST /indicators/{asset}` (OHLCV slice in request body) and receives a pre-computed struct — no OHLCV slice management in Go
+- All seven computations (RSI, volume spike, MACD, Bollinger Bands, price stats, intraday % change, 24 h stats) use the same `histominute` candle data and share the resample-then-compute pattern; Go never performs arithmetic on OHLCV data
 
 **Why Python owns news enrichment:**
 - `transformers` (FinBERT) or `vaderSentiment` for headline sentiment scoring is 3 lines in Python
@@ -379,9 +415,10 @@ Key findings to carry into implementation:
 - GoClaw receives already-enriched, deduplicated items — LLM prompt is shorter, output quality is higher
 
 **Indicator cache design:**
-- Redis key: `indicators:{asset}:{YYYY-MM-DD-HH-MM}` rounded to nearest 25 s, TTL = 30 s
+- Redis key: `indicators:{asset}:{candle_minutes}:{YYYY-MM-DD-HH-MM}` rounded to nearest 25 s, TTL = 25 s; different `candle_minutes` values produce separate cache entries
 - Go evaluator: on cache hit → use cached value; on cache miss → ai-service fetches OHLCV, computes, stores, returns
 - Prevents duplicate CryptoCompare API calls when multiple strategies evaluate in the same tick
+- The cached response includes all indicator values computed for that candle size: `{ rsi, volume_spike_ratio, macd_line, macd_signal, macd_histogram, bb_upper, bb_mid, bb_lower, pct_change, price_stats, quote_currency }` — a single cache entry serves RSI, volume-spike, MACD, Bollinger, and intraday % change rules sharing the same asset + candle size; price-denominated fields (`bb_upper`, `bb_mid`, `bb_lower`, `price_stats.*`) are in the asset's `quote_currency`; `pct_change` is dimensionless (percentage)
 
 **Python dependency stack:**
 - `fastapi` + `uvicorn` — async HTTP
