@@ -352,12 +352,235 @@ investment-intel/
 │   ├── traefik/                     # Traefik static + dynamic config
 │   └── monitoring/                  # Prometheus scrape config, Grafana dashboards
 │
+├── config/                          # Externalised business configuration
+│   ├── seed.yaml                    # Signal types, project seed data, system tunables (FR-026)
+│   └── seed.schema.json             # JSON Schema for seed.yaml validation
+│
+├── contracts/                       # Portable format schemas
+│   └── strategy-definition.schema.json  # Strategy Definition Format JSON Schema (FR-027)
+│
 └── migrations/                      # PostgreSQL migrations (golang-migrate)
 ```
 
 **Structure Decision**: Web application layout (backend + AI service + frontend + agent gateway).
 Chosen over single-project because Go, Python, and React are distinct runtimes with independent
 build/deploy pipelines. GoClaw runs as a fourth service using its own Docker image.
+
+---
+
+## Seed Configuration (FR-026)
+
+All business-level configuration is externalised into `config/seed.yaml`, validated against `config/seed.schema.json` at Go backend startup (fail-fast on invalid config). The seed file is NOT a database migration — it is a declarative description of the domain's configurable surface. The Go backend loads it once at startup and caches the parsed result in memory.
+
+### Seed file structure (illustrative excerpt)
+
+```yaml
+# config/seed.yaml — business configuration, NOT secrets
+version: "1"  # schema version; increment when breaking changes are made
+
+system:
+  poll_interval_seconds: 30
+  signal_cooldown_seconds: 300
+  indicator_cache_ttl_seconds: 25
+  ai_service_readiness_timeout_seconds: 60
+
+signal_types:
+  price_threshold:
+    display_name: "Price Threshold"
+    description: "Fires when spot price crosses above or below a fixed value"
+    parameters:
+      operator: { type: enum, values: ["above", "below"], required: true }
+      threshold: { type: decimal, required: true, currency_denominated: true }
+    data_source: coingecko_spot
+
+  pct_change:
+    display_name: "% Price Change"
+    description: "Fires when price changes by more than a threshold % over a time window"
+    parameters:
+      operator: { type: enum, values: ["above", "below"], required: true }
+      threshold: { type: decimal, required: true, unit: "percent" }
+      window_minutes: { type: enum, values: [5, 15, 60, 240, 1440], required: true }
+    data_source_routing:
+      - { window_minutes: [5, 15, 60, 240], source: cryptocompare_histominute, compute: ai_service_pct_change }
+      - { window_minutes: [1440], source: coingecko_24h }
+
+  rsi:
+    display_name: "RSI"
+    description: "Fires when 14-period RSI crosses overbought or oversold level"
+    parameters:
+      operator: { type: enum, values: ["above", "below"], required: true }
+      threshold: { type: decimal, required: true, default: 70, unit: "dimensionless" }
+      candle_minutes: { type: enum, values: [5, 15, 60], required: false, default: 15 }
+    data_source: cryptocompare_histominute
+    compute: ai_service_indicators
+    candle_multiplier: 14   # fetch 14 × candle_minutes 1-min candles
+
+  volume_spike:
+    display_name: "Volume Spike"
+    parameters:
+      operator: { type: enum, values: ["above"], required: true }
+      volume_threshold_pct: { type: decimal, required: false, default: 200, unit: "percent" }
+      candle_minutes: { type: enum, values: [5, 15, 60], required: false, default: 15 }
+    data_source: cryptocompare_histominute
+    compute: ai_service_indicators
+    candle_multiplier: 20
+
+  macd_crossover:
+    display_name: "MACD Crossover"
+    parameters:
+      cross_direction: { type: enum, values: ["bullish", "bearish"], required: true }
+      candle_minutes: { type: enum, values: [5, 15, 60], required: false, default: 15 }
+    data_source: cryptocompare_histominute
+    compute: ai_service_indicators
+    candle_multiplier: 35
+
+  bollinger_breach:
+    display_name: "Bollinger Band Breach"
+    parameters:
+      band_direction: { type: enum, values: ["upper", "lower"], required: true }
+      candle_minutes: { type: enum, values: [5, 15, 60], required: false, default: 15 }
+    data_source: cryptocompare_histominute
+    compute: ai_service_indicators
+    candle_multiplier: 20
+
+projects_seed:   # seeded into app_projects on first run (idempotent upsert)
+  - slug: btc
+    display_name: Bitcoin
+    symbol: BTC
+    coingecko_id: bitcoin
+    quote_currency: USD
+    is_signal_asset: true
+  - slug: eth
+    display_name: Ethereum
+    symbol: ETH
+    coingecko_id: ethereum
+    quote_currency: USD
+    is_signal_asset: true
+  - slug: sol
+    display_name: Solana
+    symbol: SOL
+    coingecko_id: solana
+    quote_currency: USD
+    is_signal_asset: false   # watchlist only for POC
+  # ... remaining ~17 watchlist-only projects
+```
+
+### Design decisions
+
+- **YAML over DB-only config**: signal type parameter schemas are structural (they define what fields exist, their types, and allowed values). Keeping them in YAML makes them version-controlled, diff-friendly, and reviewable in PRs. The DB stores user data (`app_strategies`, `app_signal_rules`); the seed file stores the *shape* of that data.
+- **JSON Schema validation at boot**: `config/seed.schema.json` prevents typos and structural drift from silently breaking the evaluator at runtime. The schema is also reusable by CI linting.
+- **No secrets in seed**: environment-specific values (`TELEGRAM_BOT_TOKEN`, API keys, DSNs) remain in `.env` / env vars. The seed file is safe to commit.
+- **Idempotent project seeding**: `projects_seed` entries are upserted into `app_projects` on startup (match by `slug`). This means the seed file is the source of truth for the initial project list, but admin-added projects in the DB are not overwritten.
+- **Extensibility**: to add a new signal type (e.g., `funding_rate`), a developer adds a new entry under `signal_types` in the seed file, updates the JSON Schema, adds the computation logic in ai-service, and the evaluator/validator automatically pick it up — no changes to the strategy CRUD layer or DB schema (the `signal_type` column uses a CHECK constraint derived from the seed file's keys at migration time, or a VARCHAR with application-level validation).
+
+---
+
+## Strategy Definition Format — SDF (FR-027)
+
+A portable, self-describing JSON structure that fully represents a strategy and its signal rules. The SDF is the canonical wire format for all strategy CRUD operations and the target format for future LLM-generated strategies.
+
+### JSON Schema location
+
+`contracts/strategy-definition.schema.json` — authoritative; all validation (backend, frontend, LLM pipeline) references this single schema.
+
+### SDF structure (example instance)
+
+```json
+{
+  "$schema": "../contracts/strategy-definition.schema.json",
+  "name": "BTC Breakout",
+  "asset": "btc",
+  "status": "active",
+  "rules": [
+    {
+      "signal_type": "price_threshold",
+      "operator": "above",
+      "threshold": 70000
+    },
+    {
+      "signal_type": "rsi",
+      "operator": "above",
+      "threshold": 70,
+      "candle_minutes": 15
+    },
+    {
+      "signal_type": "pct_change",
+      "operator": "above",
+      "threshold": 5.0,
+      "window_minutes": 60
+    },
+    {
+      "signal_type": "volume_spike",
+      "operator": "above",
+      "volume_threshold_pct": 300,
+      "candle_minutes": 15
+    },
+    {
+      "signal_type": "macd_crossover",
+      "cross_direction": "bullish",
+      "candle_minutes": 60
+    },
+    {
+      "signal_type": "bollinger_breach",
+      "band_direction": "upper",
+      "candle_minutes": 15
+    }
+  ]
+}
+```
+
+### JSON Schema design (discriminated union)
+
+The `rules` array uses a discriminated union on `signal_type`:
+
+```json
+{
+  "rules": {
+    "type": "array",
+    "minItems": 1,
+    "items": {
+      "oneOf": [
+        { "$ref": "#/$defs/price_threshold_rule" },
+        { "$ref": "#/$defs/pct_change_rule" },
+        { "$ref": "#/$defs/rsi_rule" },
+        { "$ref": "#/$defs/volume_spike_rule" },
+        { "$ref": "#/$defs/macd_crossover_rule" },
+        { "$ref": "#/$defs/bollinger_breach_rule" }
+      ],
+      "discriminator": { "propertyName": "signal_type" }
+    }
+  }
+}
+```
+
+Each `$def` specifies exactly the parameters valid for that signal type (e.g., `pct_change_rule` requires `window_minutes` from `{5,15,60,240,1440}` but forbids `candle_minutes`). This means:
+- **Frontend** can auto-generate the form from the schema (show/hide fields per signal type)
+- **Backend** validates incoming requests against the schema before business-rule checks
+- **LLM** (post-POC) receives the schema as context and produces valid SDF documents from natural language
+
+### Wire format alignment
+
+| Endpoint | Request body | Response body |
+|---|---|---|
+| `POST /strategies` | Single SDF document (without `status` — defaults to `active`) | Created strategy with `id` + `status` |
+| `GET /strategies/:id` | — | Full SDF document with `id`, `status`, `created_at` |
+| `PUT /strategies/:id` | Full SDF document (without `id`) | Updated strategy |
+| `POST /strategies/import` | `{ "strategies": [ SDF, SDF, ... ] }` | Array of created strategies with IDs |
+| `GET /strategies/:id/export` | — | Pure SDF document (no server-side metadata except `id`) |
+
+### LLM strategy generation pathway (post-POC extension point)
+
+The SDF is intentionally designed to be the bridge between natural language and the system:
+
+```
+User text prompt
+    → LLM (with SDF JSON Schema as context)
+    → SDF JSON document(s)
+    → POST /strategies/import (validation + persist)
+    → Active strategies
+```
+
+For POC, the import endpoint and schema are implemented and tested. The LLM-to-SDF translation layer is deferred to post-POC but the contract is already stable.
 
 ---
 

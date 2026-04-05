@@ -325,6 +325,36 @@ strategy — without any notification or digest feature needing to be present.
   dashboard. Queued notifications for an unlinked account MUST be reattempted for up to 24 hours
   after the user completes Telegram linking; notifications older than 24 hours MAY be discarded.
 
+**Seed Configuration & Strategy Definition Format**
+
+- **FR-026**: All business-level configuration — signal type definitions (with parameter schemas,
+  allowed values, and defaults), POC project seed data, and system tunables (poll interval,
+  cooldown, cache TTL, allowed `candle_minutes` / `window_minutes` sets) — MUST be externalised
+  into a declarative YAML seed file (`config/seed.yaml`) that is loaded at application startup.
+  The Go backend MUST validate the seed file against a JSON Schema (`config/seed.schema.json`)
+  on boot and refuse to start if validation fails. Adding a new signal type parameter, adjusting
+  allowed value sets, or seeding a new project MUST NOT require code changes — only a seed file
+  update (and, for new projects, a corresponding `app_projects` DB insert). The seed file MUST
+  NOT contain secrets, credentials, or environment-specific values (those stay in env vars).
+- **FR-027**: The system MUST define a **Strategy Definition Format (SDF)** — a portable,
+  self-describing JSON structure that fully represents a strategy and its signal rules. The SDF
+  MUST be documented as a JSON Schema (`contracts/strategy-definition.schema.json`) and serve as
+  the canonical wire format for `POST /strategies` request bodies and `GET /strategies/:id`
+  response bodies. The format MUST use a discriminated-union pattern (discriminator field:
+  `signal_type`) so that each signal type carries only its relevant parameters and new signal
+  types can be added by extending the schema's `oneOf` array without breaking existing clients.
+  The SDF MUST be self-validatable: the JSON Schema alone is sufficient for a consumer (human,
+  frontend form, or LLM) to produce a valid strategy without reading application code. This is
+  an **extensibility foundation** for post-POC LLM-generated strategies ("text → SDF → save");
+  the LLM integration itself is out of scope for POC but the format MUST be designed to support
+  it.
+- **FR-028**: The system MUST expose a `POST /strategies/import` endpoint that accepts one or
+  more strategies in SDF format and creates them for the authenticated user after full validation
+  (same rules as `POST /strategies`). This enables bulk creation and is the entry point for
+  future LLM-generated strategy pipelines. A corresponding `GET /strategies/:id/export` endpoint
+  MUST return the strategy in SDF format. Both endpoints are part of the REST API and require
+  authentication.
+
 ### Key Entities
 
 - **User**: Represents a registered account; holds authentication credentials, timezone
@@ -350,6 +380,10 @@ strategy — without any notification or digest feature needing to be present.
   project; serves as input to the LLM summarisation step for digest generation.
 - **Digest**: A daily generated summary for a user, containing one section per watchlist entry;
   carries delivery status and the scheduled send time.
+- **Strategy Definition (SDF)**: A portable JSON document conforming to
+  `contracts/strategy-definition.schema.json` that fully describes a strategy and its signal
+  rules in a machine-readable, self-validatable format. Used as the wire format for strategy
+  CRUD and import/export; designed as the future target format for LLM-generated strategies.
 
 ---
 
@@ -475,3 +509,6 @@ strategy — without any notification or digest feature needing to be present.
 | **Signal Asset** | A curated project with `app_projects.is_signal_asset = TRUE`, meaning it has a configured market data feed (CoinGecko + CryptoCompare) and can be used as a strategy target. BTC and ETH are signal assets for POC. Projects with `is_signal_asset = FALSE` are available for the watchlist but cannot be used in signal strategies. |
 | **Quote Currency** | The fiat currency in which asset prices and thresholds are denominated. Stored per project in `app_projects.quote_currency`; defaults to `USD` for all POC assets. Market data adapters use this value (CoinGecko `vs_currencies`, CryptoCompare `tsym`). |
 | **Linking** | The process of connecting a user's web-app account to their Telegram chat via a bot deep-link. |
+| **Strategy Definition Format (SDF)** | A portable JSON structure (with JSON Schema) that fully represents a strategy and its signal rules. Used as the wire format for `POST /strategies` and `GET /strategies/:id`, and the target format for future LLM-generated strategies ("text → SDF → save"). |
+| **Seed Configuration** | A declarative YAML file (`config/seed.yaml`) that externalises all business-level configuration: signal type definitions with parameter schemas, POC project seed data, and system tunables. Validated against `config/seed.schema.json` at boot. |
+| **Strategy Import** | Bulk creation of strategies via `POST /strategies/import` accepting an array of SDF documents; validates each against the JSON Schema and the same business rules as single creation. |
