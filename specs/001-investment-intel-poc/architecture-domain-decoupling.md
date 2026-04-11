@@ -31,77 +31,77 @@ Platform layers define **interfaces** (Go interfaces, Python ABCs, TypeScript ty
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    React Frontend                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  Platform UI  │  │  Domain UI   │  │  Platform UI  │  │
-│  │  (Auth pages, │  │ (Strategies, │  │  (Billing     │  │
-│  │   Settings)   │  │  Alerts,     │  │   pages)      │  │
-│  └──────────────┘  │  Watchlist)   │  └──────────────┘  │
-│                    └──────────────┘                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │  Platform UI │  │  Domain UI   │  │  Platform UI │   │
+│  │  (Auth pages,│  │ (Strategies, │  │  (Billing    │   │
+│  │   Settings)  │  │  Alerts,     │  │   pages)     │   │
+│  └──────────────┘  │  Watchlist)  │  └──────────────┘   │
+│                    └──────────────┘                     │
 └─────────────────────────────────────────────────────────┘
                           │
                      HTTP REST API
                           │
-┌─────────────────────────────────────────────────────────┐
-│                    Go Backend                           │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │              Platform Layer (domain-agnostic)    │    │
+┌────────────────────────────────────────────────────────┐
+│                    Go Backend                          │
+│                                                        │
+│  ┌────────────────────────────────────────────────┐    │
+│  │              Platform Layer (domain-agnostic)  │    │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │    │
-│  │  │  Auth     │  │ Billing  │  │ Notification │  │    │
-│  │  │ (Supabase │  │ (Stripe  │  │ (Telegram    │  │    │
-│  │  │  JWT,     │  │  webhook,│  │  Bot API,    │  │    │
-│  │  │  RLS,     │  │  checkout│  │  retry,      │  │    │
-│  │  │  session) │  │  gate)   │  │  queuing)    │  │    │
+│  │  │  Auth    │  │ Billing  │  │ Notification │  │    │
+│  │  │ (Supabase│  │ (Stripe  │  │ (Telegram    │  │    │
+│  │  │  JWT,    │  │  webhook,│  │  Bot API,    │  │    │
+│  │  │  RLS,    │  │  checkout│  │  retry,      │  │    │
+│  │  │  session)│  │  gate)   │  │  queuing)    │  │    │
 │  │  └──────────┘  └──────────┘  └──────────────┘  │    │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │    │
 │  │  │ EventBus │  │ Health   │  │ User Profile │  │    │
 │  │  │ (NATS    │  │ (liveness│  │ (timezone,   │  │    │
-│  │  │  publish, │  │  /ready) │  │  settings,   │  │    │
-│  │  │  consume) │  │          │  │  linking)    │  │    │
+│  │  │  publish,│  │  /ready) │  │  settings,   │  │    │
+│  │  │  consume)│  │          │  │  linking)    │  │    │
 │  │  └──────────┘  └──────────┘  └──────────────┘  │    │
-│  └──────────────────────┬──────────────────────────┘    │
-│                         │ interfaces                     │
-│  ┌──────────────────────┴──────────────────────────┐    │
-│  │           Domain Layer (investment-specific)     │    │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │    │
-│  │  │Strategies│  │ Signals  │  │   Alerts     │  │    │
-│  │  │(CRUD,    │  │(evaluator│  │ (dispatch,   │  │    │
-│  │  │ validate,│  │ poller,  │  │  history,    │  │    │
-│  │  │ SDF)     │  │ cooldown)│  │  re-drive)   │  │    │
-│  │  └──────────┘  └──────────┘  └──────────────┘  │    │
-│  │  ┌──────────┐  ┌──────────┐                     │    │
-│  │  │Watchlist │  │ Market   │                     │    │
-│  │  │(CRUD,    │  │ Data     │                     │    │
-│  │  │ digest   │  │(CoinGecko│                     │    │
-│  │  │ trigger) │  │ Crypto-  │                     │    │
-│  │  │          │  │ Compare) │                     │    │
-│  │  └──────────┘  └──────────┘                     │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
+│  └──────────────────────┬─────────────────────────┘    │
+│                         │ interfaces                   │
+│  ┌──────────────────────┴──────────────────────────┐   │
+│  │           Domain Layer (investment-specific)    │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │   │
+│  │  │Strategies│  │ Signals  │  │   Alerts     │   │   │
+│  │  │(CRUD,    │  │(evaluator│  │ (dispatch,   │   │   │
+│  │  │ validate,│  │ poller,  │  │  history,    │   │   │
+│  │  │ SDF)     │  │ cooldown)│  │  re-drive)   │   │   │
+│  │  └──────────┘  └──────────┘  └──────────────┘   │   │
+│  │  ┌──────────┐  ┌──────────┐                     │   │
+│  │  │Watchlist │  │ Market   │                     │   │
+│  │  │(CRUD,    │  │ Data     │                     │   │
+│  │  │ digest   │  │(CoinGecko│                     │   │
+│  │  │ trigger) │  │ Crypto-  │                     │   │
+│  │  │          │  │ Compare) │                     │   │
+│  │  └──────────┘  └──────────┘                     │   │
+│  └─────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────┘
                           │
                    internal HTTP
                           │
 ┌─────────────────────────────────────────────────────────┐
 │                 Python AI Service                       │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │         Platform Layer (domain-agnostic)          │   │
-│  │  ┌───────────┐  ┌───────────┐  ┌─────────────┐  │   │
-│  │  │ Compute   │  │ Enrichment│  │ Provider    │  │   │
-│  │  │ Engine    │  │ Pipeline  │  │ Registry    │  │   │
-│  │  │ (cache,   │  │ (sentiment│  │ (abstract   │  │   │
-│  │  │  resample,│  │  dedup,   │  │  interfaces)│  │   │
-│  │  │  health)  │  │  score)   │  │             │  │   │
-│  │  └───────────┘  └───────────┘  └─────────────┘  │   │
+│  │         Platform Layer (domain-agnostic)         │   │
+│  │  ┌───────────┐  ┌───────────┐  ┌─────────────┐   │   │
+│  │  │ Compute   │  │ Enrichment│  │ Provider    │   │   │
+│  │  │ Engine    │  │ Pipeline  │  │ Registry    │   │   │
+│  │  │ (cache,   │  │ (sentiment│  │ (abstract   │   │   │
+│  │  │  resample,│  │  dedup,   │  │  interfaces)│   │   │
+│  │  │  health)  │  │  score)   │  │             │   │   │
+│  │  └───────────┘  └───────────┘  └─────────────┘   │   │
 │  └──────────────────────┬───────────────────────────┘   │
-│                         │ interfaces                     │
+│                         │ interfaces                    │
 │  ┌──────────────────────┴───────────────────────────┐   │
-│  │         Domain Layer (investment-specific)         │   │
-│  │  ┌───────────┐  ┌───────────┐  ┌─────────────┐  │   │
-│  │  │ RSI, MACD │  │CryptoPanic│  │ Project     │  │   │
-│  │  │ Bollinger │  │ DuckDuckGo│  │ Registry    │  │   │
-│  │  │ Volume    │  │ (news     │  │ (crypto     │  │   │
-│  │  │ PctChange │  │  adapters)│  │  assets)    │  │   │
-│  │  └───────────┘  └───────────┘  └─────────────┘  │   │
+│  │         Domain Layer (investment-specific)       │   │
+│  │  ┌───────────┐  ┌───────────┐  ┌─────────────┐   │   │
+│  │  │ RSI, MACD │  │CryptoPanic│  │ Project     │   │   │
+│  │  │ Bollinger │  │ DuckDuckGo│  │ Registry    │   │   │
+│  │  │ Volume    │  │ (news     │  │ (crypto     │   │   │
+│  │  │ PctChange │  │  adapters)│  │  assets)    │   │   │
+│  │  └───────────┘  └───────────┘  └─────────────┘   │   │
 │  └──────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
                           │
@@ -110,15 +110,15 @@ Platform layers define **interfaces** (Go interfaces, Python ABCs, TypeScript ty
 ┌─────────────────────────────────────────────────────────┐
 │               Agent Gateway (pluggable)                 │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │        Framework Layer (domain-agnostic)          │   │
+│  │        Framework Layer (domain-agnostic)         │   │
 │  │  Cron, LLM provider, Telegram channel, HTTP      │   │
-│  │  fetch, subagent, permissions, observability      │   │
+│  │  fetch, subagent, permissions, observability     │   │
 │  └──────────────────────┬───────────────────────────┘   │
-│                         │ skill files                    │
+│                         │ skill files                   │
 │  ┌──────────────────────┴───────────────────────────┐   │
-│  │        Domain Skills (investment-specific)         │   │
-│  │  crypto-digest.md, AGENT.md persona               │   │
-│  │  (references /news/, /enrich/, /projects/)        │   │
+│  │        Domain Skills (investment-specific)       │   │
+│  │  crypto-digest.md, AGENT.md persona              │   │
+│  │  (references /news/, /enrich/, /projects/)       │   │
 │  └──────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -129,9 +129,11 @@ Each boundary between platform and domain is a Go `interface`, Python `ABC`, or 
 
 | Boundary | Interface | Platform Side | Domain Implementation |
 |---|---|---|---|
-| Subscription gating | `SubscriptionGatable` | Billing middleware checks `HasActiveSubscription(userID)` | Domain decides which routes are gated |
-| Notification dispatch | `NotificationPayload` | Telegram sender accepts generic `{recipient, subject, body, metadata}` | Domain formats investment-specific alert message |
-| Event publishing | `EventPublisher` | NATS helper publishes generic `{subject, payload}` | Domain defines `signal.triggered.*` subjects and payload schemas |
+| Auth | `AuthProvider` | Middleware validates token via `AuthProvider.ValidateToken()`; provider-agnostic | N/A — platform concern; Supabase is POC provider |
+| Billing | `BillingProvider` + `SubscriptionChecker` | Gate middleware checks `HasActiveSubscription(userID)` via interface | Domain decides which routes are gated |
+| Notification dispatch | `NotificationPayload` + `Sender` | Dispatcher accepts generic `{recipient, channel, subject, body, metadata}` and routes to registered `Sender` | Domain formats investment-specific alert message |
+| Account linking | `AccountLinker` | Platform manages link flow via `AccountLinker` interface; Telegram is one implementation | N/A — platform concern |
+| Event publishing | `Publisher` + `Consumer` | Event bus accepts generic `{subject, payload}` via `Publisher`; NATS is POC provider | Domain defines `signal.triggered.*` subjects and payload schemas |
 | Digest content | `DigestContentProvider` | Agent Gateway skill calls generic `/internal/digest/content` | Domain returns investment news + price summaries |
 | Indicator computation | `ComputeEngine` | ai-service accepts generic `{data_points[], compute_type, params}` | Domain registers RSI, MACD, Bollinger, etc. as compute types |
 | News fetching | `ContentProvider` | ai-service fetches from generic provider interface | Domain implements CryptoPanic, DuckDuckGo adapters |
@@ -162,6 +164,68 @@ func main() {
 }
 ```
 
+### P5 — Provider Abstraction (Swappable Infrastructure Providers)
+
+In addition to the platform/domain split, each platform concern further separates **provider-agnostic interfaces** from **concrete provider implementations**. This ensures that swapping an infrastructure provider (e.g., Supabase → Casdoor, Stripe → LemonSqueezy, Telegram → Discord, NATS → Kafka) requires changes only inside the provider subdirectory — no changes to platform interfaces, domain code, or other platform consumers.
+
+```
+platform/{concern}/
+├── interfaces.go          # Provider-agnostic contracts (Go interfaces)
+├── {provider}/            # Concrete implementation (swappable)
+│   ├── client.go          # Provider-specific SDK/API wrapper
+│   └── ...                # Provider-specific files
+├── dispatcher.go          # (if applicable) Routes to the correct provider
+└── middleware.go          # (if applicable) Uses interfaces, not provider types
+```
+
+**Provider abstraction boundaries:**
+
+| Platform Concern | Interface (provider-agnostic) | POC Provider | Future Swap Examples |
+|---|---|---|---|
+| **Auth** | `AuthProvider` (ValidateToken, GetUser, CreateUser) | `auth/supabase/` | Casdoor, Keycloak, Auth0, Firebase Auth |
+| **Billing** | `BillingProvider` (CreateCheckout, HandleWebhook, CheckSubscription) | `billing/stripe/` | LemonSqueezy, Paddle, RevenueCat |
+| **Notification** | `Sender` (Send, Channel) | `notification/telegram/` | Discord, Slack, Email (SendGrid), Push (FCM) |
+| **Event Bus** | `Publisher`, `Consumer` (Publish, Subscribe, Start, Drain) | `eventbus/nats/` | Kafka, RabbitMQ, Redis Streams |
+| **User Messaging** | `AccountLinker` (GenerateLink, HandleCallback, ConfirmLink) | `notification/telegram/` (linking) | Discord OAuth, Slack App install |
+
+**Swap procedure (example: Supabase → Casdoor):**
+
+1. Create `platform/auth/casdoor/` with Casdoor SDK implementation of `AuthProvider`
+2. Update `cmd/server/main.go` to wire `casdoor.New(cfg)` instead of `supabase.New(cfg)`
+3. Zero changes to: `platform/auth/interfaces.go`, `platform/auth/middleware.go`, any `domain/` code, any other platform package
+
+```go
+// cmd/server/main.go — provider wiring
+func main() {
+    // Auth provider (swap by changing this one line)
+    authProvider := supabase.New(cfg.Auth)    // ← POC: Supabase
+    // authProvider := casdoor.New(cfg.Auth)  // ← Future: Casdoor
+
+    // Billing provider (swap by changing this one line)
+    billingProvider := stripe.New(cfg.Billing)    // ← POC: Stripe
+    // billingProvider := lemonsqueezy.New(cfg.Billing)  // ← Future
+
+    // Notification channels (add new channels without touching existing ones)
+    telegramSender := telegram.New(cfg.Telegram)
+    // discordSender := discord.New(cfg.Discord)  // ← Future: add Discord channel
+
+    dispatcher := notification.NewDispatcher()
+    dispatcher.RegisterSender(telegramSender)
+    // dispatcher.RegisterSender(discordSender)  // ← Future: register Discord
+
+    // Event bus (swap by changing this one line)
+    eventBus := nats.New(cfg.NATS)    // ← POC: NATS JetStream
+    // eventBus := kafka.New(cfg.Kafka)  // ← Future: Kafka
+
+    platform := platform.New(authProvider, billingProvider, dispatcher, eventBus, ...)
+    domain := investmentdomain.New(cfg)
+    domain.Register(platform)
+    platform.Start()
+}
+```
+
+> **POC pragmatism:** For the POC, each concern has exactly one provider implementation. The abstraction layer adds negligible overhead (one interface indirection) but provides the foundation for multi-provider support. We do NOT build adapter code for providers we are not using — only the interface and the one concrete implementation.
+
 ### P4 — Separate Database Namespaces
 
 | Namespace | Owner | Domain-Agnostic? |
@@ -182,32 +246,45 @@ Platform tables (`platform_*`) contain only domain-agnostic data: user identity,
 
 ```
 backend/
-├── cmd/server/main.go                    # Wires platform + domain; starts server
+├── cmd/server/main.go                    # Wires providers + platform + domain; starts server
 │
 ├── platform/                             # ← DOMAIN-AGNOSTIC (reusable across projects)
-│   ├── auth/                             # JWT validation, Supabase integration, session mgmt
-│   │   ├── middleware.go                 # Auth middleware (extracts user from JWT)
-│   │   ├── supabase.go                  # Supabase client
-│   │   └── handler.go                   # /auth/* routes (register, login, logout, etc.)
-│   ├── billing/                          # Stripe integration, subscription gating
-│   │   ├── checkout.go                  # Checkout session creation
-│   │   ├── webhook.go                   # Stripe webhook handler
-│   │   ├── gate.go                      # Subscription gate middleware
-│   │   └── interfaces.go               # SubscriptionGatable, BillingEventHandler
-│   ├── notification/                     # Generic notification dispatch (Telegram, future: email, push)
-│   │   ├── interfaces.go               # NotificationPayload, NotificationSender, NotificationChannel
-│   │   ├── telegram/                    # Telegram-specific sender
-│   │   │   ├── bot.go                   # Telegram Bot API client
-│   │   │   ├── link_service.go          # Account linking (deep-link, webhook, confirm)
-│   │   │   └── handler.go              # /telegram/* routes
-│   │   └── dispatcher.go               # Generic dispatch: accept payload → route to channel
-│   ├── eventbus/                         # Generic event pub/sub (NATS JetStream abstracted)
-│   │   ├── interfaces.go               # EventPublisher, EventConsumer, EventHandler
-│   │   ├── nats.go                      # NATS JetStream implementation
-│   │   └── stream.go                   # Stream/consumer config helpers
+│   ├── auth/                             # Authentication & authorization
+│   │   ├── interfaces.go               # AuthProvider, TokenValidator, UserResolver (provider-agnostic)
+│   │   ├── middleware.go                # Auth middleware (uses AuthProvider interface — no provider knowledge)
+│   │   ├── handler.go                  # /auth/* routes (delegates to AuthProvider)
+│   │   └── supabase/                   # ← SWAPPABLE provider implementation
+│   │       ├── client.go               # Supabase SDK client (implements AuthProvider)
+│   │       └── config.go               # Supabase-specific config (URL, keys)
+│   │       # Future: casdoor/, keycloak/, auth0/, firebase/ — same interface
+│   ├── billing/                          # Subscription & payment processing
+│   │   ├── interfaces.go               # BillingProvider, SubscriptionChecker, BillingEventHandler (provider-agnostic)
+│   │   ├── gate.go                      # Subscription gate middleware (uses SubscriptionChecker interface)
+│   │   └── stripe/                     # ← SWAPPABLE provider implementation
+│   │       ├── client.go               # Stripe SDK client (implements BillingProvider)
+│   │       ├── checkout.go             # Stripe-specific checkout session creation
+│   │       ├── webhook.go              # Stripe-specific webhook handler + signature validation
+│   │       └── config.go               # Stripe-specific config (secret key, webhook signing secret)
+│   │       # Future: lemonsqueezy/, paddle/, revenuecat/ — same interface
+│   ├── notification/                     # Generic notification dispatch
+│   │   ├── interfaces.go               # NotificationPayload, Sender, AccountLinker, Dispatcher (provider-agnostic)
+│   │   ├── dispatcher.go               # Generic dispatch: accept payload → route to Sender by channel
+│   │   └── telegram/                   # ← SWAPPABLE notification channel (one of many)
+│   │       ├── sender.go               # Telegram Bot API sender (implements Sender)
+│   │       ├── linker.go               # Telegram deep-link account linking (implements AccountLinker)
+│   │       ├── handler.go              # /telegram/* webhook routes
+│   │       └── config.go               # Telegram-specific config (bot token)
+│   │       # Future: discord/, slack/, email/, push/ — each implements Sender (+ optionally AccountLinker)
+│   ├── eventbus/                         # Generic event pub/sub
+│   │   ├── interfaces.go               # Publisher, Consumer, Handler (provider-agnostic)
+│   │   └── nats/                       # ← SWAPPABLE event bus implementation
+│   │       ├── client.go               # NATS JetStream (implements Publisher, Consumer)
+│   │       ├── stream.go               # Stream/consumer config helpers
+│   │       └── config.go               # NATS-specific config (URL, credentials)
+│   │       # Future: kafka/, rabbitmq/, redis_streams/ — same interface
 │   ├── health/                           # /health, /ready endpoints
 │   ├── user/                             # User profile (timezone, settings — not domain-specific)
-│   │   ├── model.go                     # User struct (id, email, timezone, telegram_chat_id, subscription_status)
+│   │   ├── model.go                     # User struct (id, email, timezone, linked_channels, subscription_status)
 │   │   └── handler.go                  # /users/me routes
 │   ├── admin/                            # Admin middleware + generic user management
 │   ├── server/                           # HTTP server setup, graceful shutdown, router mounting
@@ -352,7 +429,91 @@ frontend/src/
 
 ## 4. Interface Definitions (Key Examples)
 
-### 4.1 Go — Notification Interface (Platform)
+### 4.1 Go — Auth Provider Interface (Platform — provider-agnostic)
+
+```go
+// platform/auth/interfaces.go
+package auth
+
+import "context"
+
+// UserInfo is the provider-agnostic representation of an authenticated user.
+type UserInfo struct {
+    ID    string
+    Email string
+    Role  string // "user", "admin"
+}
+
+// AuthProvider abstracts the authentication backend.
+// POC implementation: Supabase. Future: Casdoor, Keycloak, Auth0, Firebase Auth.
+type AuthProvider interface {
+    // ValidateToken verifies a JWT or session token and returns user info.
+    ValidateToken(ctx context.Context, token string) (*UserInfo, error)
+
+    // CreateUser registers a new user (email + password).
+    CreateUser(ctx context.Context, email, password string) (*UserInfo, error)
+
+    // ResetPassword initiates a password reset flow.
+    ResetPassword(ctx context.Context, email string) error
+
+    // PublicKey returns the public key for JWT validation (used by middleware).
+    PublicKey(ctx context.Context) ([]byte, error)
+}
+```
+
+### 4.2 Go — Billing Provider Interface (Platform — provider-agnostic)
+
+```go
+// platform/billing/interfaces.go
+package billing
+
+import "context"
+
+// CheckoutSession is a provider-agnostic checkout session.
+type CheckoutSession struct {
+    ID          string // Provider's session/checkout ID
+    RedirectURL string // URL to redirect user to for payment
+}
+
+// WebhookEvent is a provider-agnostic billing event extracted from a webhook.
+type WebhookEvent struct {
+    Type   string // "subscription.created", "subscription.cancelled", "payment.failed"
+    UserID string // Resolved from provider's customer → our user mapping
+}
+
+// BillingProvider abstracts the payment/subscription backend.
+// POC implementation: Stripe. Future: LemonSqueezy, Paddle, RevenueCat.
+type BillingProvider interface {
+    // CreateCheckoutSession creates a payment session and returns a redirect URL.
+    CreateCheckoutSession(ctx context.Context, userID string) (*CheckoutSession, error)
+
+    // ValidateWebhook verifies the webhook signature and parses the event.
+    ValidateWebhook(ctx context.Context, payload []byte, signature string) (*WebhookEvent, error)
+
+    // GetSubscriptionStatus returns the current subscription status for a user.
+    GetSubscriptionStatus(ctx context.Context, userID string) (string, error)
+
+    // CancelSubscription cancels the user's subscription.
+    CancelSubscription(ctx context.Context, userID string) error
+}
+
+// SubscriptionChecker is used by the gate middleware to check subscription status.
+// The platform provides the implementation backed by BillingProvider.
+type SubscriptionChecker interface {
+    HasActiveSubscription(ctx context.Context, userID string) (bool, error)
+}
+
+// BillingEventHandler allows the domain to react to billing events (optional).
+type BillingEventHandler interface {
+    OnSubscriptionCreated(ctx context.Context, userID string) error
+    OnSubscriptionCancelled(ctx context.Context, userID string) error
+    OnPaymentFailed(ctx context.Context, userID string) error
+}
+```
+
+### 4.3 Go — Notification Interface (Platform — provider-agnostic)
+
+### 4.3 Go — Notification Interface (Platform — provider-agnostic)
 
 ```go
 // platform/notification/interfaces.go
@@ -361,16 +522,36 @@ package notification
 // NotificationPayload is the domain-agnostic envelope for any notification.
 // The domain layer populates this; the platform layer delivers it.
 type NotificationPayload struct {
-    RecipientUserID string            // Platform resolves this to telegram_chat_id, email, etc.
-    Channel         string            // "telegram", "email", "push" (extensible)
+    RecipientUserID string            // Platform resolves this to channel-specific address
+    Channel         string            // "telegram", "discord", "email", "push" (extensible)
     Subject         string            // Short title (used by some channels)
     Body            string            // Formatted message body
     Metadata        map[string]string // Domain-specific key-value pairs (for logging/tracing)
 }
 
 // Sender delivers a notification via a specific channel.
+// POC: Telegram sender. Future: Discord, Slack, Email (SendGrid), Push (FCM).
 type Sender interface {
     Send(ctx context.Context, payload NotificationPayload) error
+    Channel() string // Returns the channel name (e.g., "telegram", "discord")
+}
+
+// AccountLinker handles the user ↔ messaging platform linking flow.
+// POC: Telegram deep-link. Future: Discord OAuth, Slack App install.
+type AccountLinker interface {
+    // GenerateLink creates a one-time link URL/token for the user.
+    GenerateLink(ctx context.Context, userID string) (string, error)
+
+    // HandleCallback processes the callback from the messaging platform.
+    HandleCallback(ctx context.Context, callbackData []byte) (userID string, channelAddr string, err error)
+
+    // ConfirmLink persists the link and sends a confirmation message.
+    ConfirmLink(ctx context.Context, userID string, channelAddr string) error
+
+    // UnlinkAccount removes the user's link to this channel.
+    UnlinkAccount(ctx context.Context, userID string) error
+
+    // Channel returns which channel this linker handles (e.g., "telegram").
     Channel() string
 }
 
@@ -381,13 +562,15 @@ type Dispatcher interface {
 }
 ```
 
-### 4.2 Go — Event Bus Interface (Platform)
+### 4.4 Go — Event Bus Interface (Platform — provider-agnostic)
+
+### 4.4 Go — Event Bus Interface (Platform — provider-agnostic)
 
 ```go
 // platform/eventbus/interfaces.go
 package eventbus
 
-// Event is a domain-agnostic event envelope.
+// Event is a provider-agnostic event envelope.
 type Event struct {
     Subject       string // e.g., "signal.triggered.btc" — domain defines subjects
     Payload       []byte // JSON-encoded domain payload
@@ -395,6 +578,7 @@ type Event struct {
 }
 
 // Publisher publishes events to the bus.
+// POC: NATS JetStream. Future: Kafka, RabbitMQ, Redis Streams.
 type Publisher interface {
     Publish(ctx context.Context, event Event) error
 }
@@ -405,6 +589,7 @@ type Handler interface {
 }
 
 // Consumer subscribes to events and routes them to Handlers.
+// POC: NATS JetStream. Future: Kafka consumer group, RabbitMQ consumer.
 type Consumer interface {
     Subscribe(subject string, handler Handler) error
     Start(ctx context.Context) error
@@ -412,7 +597,7 @@ type Consumer interface {
 }
 ```
 
-### 4.3 Go — Domain Registration Interface
+### 4.5 Go — Domain Registration Interface
 
 ```go
 // platform/server/interfaces.go
@@ -434,27 +619,7 @@ type DomainModule interface {
 }
 ```
 
-### 4.4 Go — Billing Gate Interface (Platform)
-
-```go
-// platform/billing/interfaces.go
-package billing
-
-// SubscriptionChecker is used by the gate middleware to check subscription status.
-// The platform provides the implementation (Stripe-backed).
-type SubscriptionChecker interface {
-    HasActiveSubscription(ctx context.Context, userID string) (bool, error)
-}
-
-// BillingEventHandler allows the domain to react to billing events (optional).
-type BillingEventHandler interface {
-    OnSubscriptionCreated(ctx context.Context, userID string) error
-    OnSubscriptionCancelled(ctx context.Context, userID string) error
-    OnPaymentFailed(ctx context.Context, userID string) error
-}
-```
-
-### 4.5 Python — Compute Engine Interface (Platform)
+### 4.6 Python — Compute Engine Interface (Platform)
 
 ```python
 # ai-service/src/platform/compute/interfaces.py
@@ -479,7 +644,7 @@ class ComputeEngine(ABC):
     async def execute(self, compute_type: str, data_points: list[dict], params: dict) -> dict: ...
 ```
 
-### 4.6 Python — Content Provider Interface (Platform)
+### 4.7 Python — Content Provider Interface (Platform)
 
 ```python
 # ai-service/src/platform/content/interfaces.py
@@ -655,7 +820,51 @@ import "github.com/nats-io/nats.go"
 import "backend/platform/eventbus"
 ```
 
-### Rule 3: Database Migrations Follow Namespace Convention
+### Rule 3: Platform Code Uses Interfaces, Not Provider Implementations
+
+```go
+// ❌ FORBIDDEN — platform middleware importing a specific provider
+import "backend/platform/auth/supabase"
+
+// ✅ CORRECT — platform middleware uses the provider-agnostic interface
+import "backend/platform/auth" // AuthProvider interface
+```
+
+```go
+// ❌ FORBIDDEN — platform notification dispatcher importing Telegram directly
+import "backend/platform/notification/telegram"
+
+// ✅ CORRECT — dispatcher uses the Sender interface
+import "backend/platform/notification" // Sender interface
+```
+
+### Rule 4: Provider Implementations Only Import Their Own SDK
+
+```go
+// ❌ FORBIDDEN — Supabase provider importing Stripe SDK
+import "github.com/stripe/stripe-go"
+
+// ✅ CORRECT — each provider dir imports only its own external SDK
+// platform/auth/supabase/ imports only Supabase SDK
+// platform/billing/stripe/ imports only Stripe SDK
+// platform/notification/telegram/ imports only Telegram Bot API client
+// platform/eventbus/nats/ imports only NATS client
+```
+
+### Rule 5: Wiring Happens Only in `cmd/server/main.go`
+
+```go
+// ❌ FORBIDDEN — platform package choosing its own provider
+// inside platform/auth/middleware.go:
+func NewMiddleware() { client := supabase.New(...) }  // hard-coupled!
+
+// ✅ CORRECT — main.go wires provider → interface
+// cmd/server/main.go:
+authProvider := supabase.New(cfg)
+authMiddleware := auth.NewMiddleware(authProvider)  // dependency injection
+```
+
+### Rule 6: Database Migrations Follow Namespace Convention
 
 ```sql
 -- Platform migrations: 001_platform_users.sql, 002_platform_notifications.sql
@@ -663,7 +872,7 @@ import "backend/platform/eventbus"
 -- Number ranges: 001-099 = platform, 100-199 = investment domain, 200-299 = next domain
 ```
 
-### Rule 4: Config Separation
+### Rule 7: Config Separation
 
 ```
 config/
@@ -674,7 +883,7 @@ config/
         └── seed.schema.json   # Investment-specific schema
 ```
 
-### Rule 5: Test Organization Mirrors Source
+### Rule 8: Test Organization Mirrors Source
 
 ```
 tests/
@@ -695,12 +904,19 @@ tests/
 
 | Aspect | Before | After |
 |---|---|---|
-| Auth code location | `internal/auth/` (mixed with domain) | `platform/auth/` (isolated, reusable) |
-| Billing code location | `internal/billing/` (mixed with domain) | `platform/billing/` (isolated, reusable) |
-| Notification code | Telegram-specific in `internal/telegram/` | Generic `platform/notification/` with Telegram as a channel |
-| Event bus | `pkg/nats/` (NATS-specific) | `platform/eventbus/` with NATS as an implementation |
+| Auth code location | `internal/auth/` (mixed with domain, hard-coupled to Supabase) | `platform/auth/interfaces.go` (provider-agnostic) + `platform/auth/supabase/` (swappable provider) |
+| Billing code location | `internal/billing/` (mixed with domain, hard-coupled to Stripe) | `platform/billing/interfaces.go` (provider-agnostic) + `platform/billing/stripe/` (swappable provider) |
+| Notification code | Telegram-specific in `internal/telegram/` | `platform/notification/interfaces.go` (provider-agnostic) + `platform/notification/telegram/` (swappable channel); add Discord/Slack/Email by adding a new sender implementation |
+| Event bus | `pkg/nats/` (NATS-specific, leaked throughout codebase) | `platform/eventbus/interfaces.go` (provider-agnostic) + `platform/eventbus/nats/` (swappable implementation) |
 | Domain code | `internal/strategies/`, `internal/signals/`, etc. | `domain/investment/strategies/`, `domain/investment/signals/`, etc. |
 | AI agents | Agent Gateway already domain-agnostic | Skills organized into `_platform/` (reusable) and domain-specific agent dirs |
 | Swapping domains | Requires rewriting most of `internal/` | Requires writing only a new `domain/` module + skill files |
+| Swapping auth provider | Requires rewriting auth middleware + all auth code | Create new `platform/auth/{provider}/` implementing `AuthProvider`; change one line in `main.go` |
+| Swapping billing provider | Requires rewriting billing + webhook + checkout code | Create new `platform/billing/{provider}/` implementing `BillingProvider`; change one line in `main.go` |
+| Adding notification channel | Requires deep changes to notification logic | Create new `platform/notification/{channel}/` implementing `Sender`; register with `Dispatcher` |
+| Swapping event bus | Requires changing every file that imports NATS | Create new `platform/eventbus/{provider}/` implementing `Publisher` + `Consumer`; change one line in `main.go` |
 
-**Trade-off accepted:** Slightly more indirection (interfaces at boundaries) in exchange for full domain portability and platform reusability.
+**Trade-offs accepted:**
+- Slightly more indirection (interfaces at boundaries) in exchange for full domain portability and platform reusability.
+- One additional abstraction layer within platform concerns (interface → provider) in exchange for infrastructure provider swappability.
+- POC builds exactly one implementation per interface — no premature multi-provider code. The abstractions are "free" in terms of runtime cost (single interface dispatch) and pay off the moment a second provider is needed.

@@ -28,13 +28,15 @@ different domains (e.g., e-commerce price monitoring, healthcare alerts) without
 auth, billing, or agent code.
 
 **Key structural rules:**
-- **`platform/`** packages are domain-agnostic: auth, billing, notification, event bus, health, user profile, admin. They define interfaces; they never import domain code.
+- **`platform/`** packages are domain-agnostic: auth, billing, notification, event bus, health, user profile, admin. They define **provider-agnostic interfaces**; they never import domain code or provider-specific SDKs in their interface/middleware files.
+- **`platform/{concern}/{provider}/`** subdirectories contain the **swappable provider implementation** (e.g., `auth/supabase/`, `billing/stripe/`, `notification/telegram/`, `eventbus/nats/`). Each provider subdir imports only its own SDK. Swapping a provider (e.g., Supabase → Casdoor) requires only a new provider subdir + one wiring change in `cmd/server/main.go` — all middleware, handlers, and domain code remain unchanged.
 - **`domain/investment/`** packages contain all investment-specific logic: strategies, signals, alerts, watchlist, market data adapters. They implement platform interfaces and register themselves at startup.
 - **Agent Gateway** skills are split into reusable platform utilities and domain-specific agent definitions (digest persona, crypto-digest skill).
 - **Python ai-service** separates a generic compute/enrichment/content platform from investment-specific indicator implementations and news adapters.
 - **React frontend** separates platform pages (auth, billing, settings, admin) from domain pages (dashboard, strategies, alerts, watchlist).
 - Platform tables use `platform_` namespace; domain tables use `app_` namespace; Agent Gateway uses `gc_` namespace.
 - Swapping the domain requires writing a new `domain/` module and agent skills — zero changes to platform code.
+- Swapping an infrastructure provider requires writing a new provider subdir — zero changes to platform interfaces, other providers, or domain code.
 
 ---
 
@@ -162,11 +164,11 @@ A single authoritative reference for which service owns each concern. When in do
 | Concern | Owner | Layer | Rationale |
 |---|---|---|---|
 | REST API server, router, graceful shutdown | **Go backend** | **Platform** | Generic HTTP server lifecycle; domain modules register their routes at startup |
-| JWT validation & user-context injection | **Go backend** | **Platform** | Supabase public-key verification at the edge; domain-agnostic — any domain uses same auth |
-| Stripe checkout, webhook processing, subscription gating | **Go backend** | **Platform** | Billing is domain-agnostic; gate middleware checks subscription status without knowing what features are gated |
-| Generic notification dispatch (route to Telegram/email/push) | **Go backend** | **Platform** | Domain formats the `NotificationPayload`; platform delivers it via the correct channel |
-| Telegram Bot API client + account linking | **Go backend** | **Platform** | Telegram is a notification channel, not domain logic; linking is user-level |
-| Generic event pub/sub (NATS JetStream abstracted) | **Go backend** | **Platform** | Domain publishes/consumes events through platform `EventPublisher`/`EventConsumer` interfaces; NATS is an implementation detail |
+| JWT validation & user-context injection | **Go backend** | **Platform** | `platform/auth/interfaces.go` defines `AuthProvider`; `platform/auth/supabase/` implements it for POC; swap to Casdoor/Keycloak by adding a new provider dir — middleware and domain code unchanged |
+| Stripe checkout, webhook processing, subscription gating | **Go backend** | **Platform** | `platform/billing/interfaces.go` defines `BillingProvider` + `SubscriptionChecker`; `platform/billing/stripe/` implements them for POC; swap to LemonSqueezy/Paddle by adding a new provider dir — gate middleware and domain code unchanged |
+| Generic notification dispatch (route to Telegram/email/push) | **Go backend** | **Platform** | `platform/notification/interfaces.go` defines `Sender` + `AccountLinker` + `Dispatcher`; domain formats the `NotificationPayload`; platform routes it to the correct `Sender`; add Discord/Slack/Email by implementing `Sender` in a new provider dir |
+| Telegram Bot API client + account linking | **Go backend** | **Platform** | `platform/notification/telegram/` implements `Sender` + `AccountLinker` interfaces; swappable — add `discord/` implementing the same interfaces to support Discord as a notification/linking channel |
+| Generic event pub/sub (NATS JetStream abstracted) | **Go backend** | **Platform** | `platform/eventbus/interfaces.go` defines `Publisher` + `Consumer`; `platform/eventbus/nats/` implements them for POC; swap to Kafka/RabbitMQ by adding a new provider dir — domain code unchanged |
 | User profile (timezone, settings) | **Go backend** | **Platform** | Domain-agnostic user preferences |
 | Admin middleware + user management | **Go backend** | **Platform** | Generic admin operations |
 | Health endpoints (`/health`, `/ready`) | **Go backend** | **Platform** | Infrastructure concern |
@@ -236,8 +238,9 @@ Python ai-service internal endpoints use the same envelope for consistency, thou
 
 | Service / Layer | Must NOT |
 |---|---|
-| **Go backend — Platform** | Import any `domain/` package; call LLM APIs directly; know about strategies, signals, or market data; compute technical indicators |
-| **Go backend — Domain** | Import NATS directly (use `platform/eventbus` interface); send Telegram directly (use `platform/notification` interface); implement auth or billing logic |
+| **Go backend — Platform (interfaces)** | Import any `domain/` package; import any provider subpackage directly (e.g., `platform/auth/middleware.go` MUST NOT import `platform/auth/supabase/`); call LLM APIs directly; know about strategies, signals, or market data; compute technical indicators |
+| **Go backend — Platform (providers)** | Import another provider's SDK (e.g., `platform/auth/supabase/` MUST NOT import Stripe SDK); import `domain/` packages; contain business logic beyond adapter translation |
+| **Go backend — Domain** | Import provider packages directly (use `platform/auth`, `platform/eventbus`, `platform/notification` interfaces only); import NATS/Stripe/Supabase/Telegram SDKs directly; implement auth or billing logic |
 | **Python ai-service — Platform** | Know about crypto indicators, news providers, or project registries; contain investment-specific logic |
 | **Python ai-service — Domain** | Evaluate signal threshold rules (Go domain logic); touch NATS; send Telegram messages; own user-facing Postgres tables |
 | **Agent Gateway — Framework** | Contain domain business logic; connect to NATS; perform real-time alert dispatch; own Postgres migrations |
@@ -305,29 +308,42 @@ specs/001-investment-intel-poc/
 investment-intel/
 │
 ├── backend/                         # Go API service
-│   ├── cmd/server/main.go          # Wires platform + domain; starts server
+│   ├── cmd/server/main.go          # Wires providers + platform + domain; starts server
 │   │
 │   ├── platform/                    # DOMAIN-AGNOSTIC (reusable across projects)
-│   │   ├── auth/                    # JWT validation, Supabase integration
-│   │   │   ├── middleware.go        # Auth middleware (extracts user from JWT)
-│   │   │   ├── supabase.go         # Supabase client
-│   │   │   └── handler.go          # /auth/* routes (register, login, logout, etc.)
-│   │   ├── billing/                 # Stripe subscription + webhook handler
-│   │   │   ├── checkout.go
-│   │   │   ├── webhook.go
-│   │   │   ├── gate.go             # Subscription gate middleware
-│   │   │   └── interfaces.go       # SubscriptionChecker, BillingEventHandler
-│   │   ├── notification/            # Generic notification dispatch
-│   │   │   ├── interfaces.go       # NotificationPayload, Sender, Dispatcher
-│   │   │   ├── telegram/           # Telegram-specific channel
-│   │   │   │   ├── bot.go          # Telegram Bot API client
-│   │   │   │   ├── link_service.go  # Account linking (deep-link, webhook, confirm)
-│   │   │   │   └── handler.go      # /telegram/* routes
-│   │   │   └── dispatcher.go       # Route payload → correct channel
-│   │   ├── eventbus/                # Generic event pub/sub (NATS JetStream abstracted)
-│   │   │   ├── interfaces.go       # EventPublisher, EventConsumer, EventHandler
-│   │   │   ├── nats.go             # NATS JetStream implementation
-│   │   │   └── stream.go           # Stream/consumer config helpers
+│   │   ├── auth/                    # Authentication & authorization (provider-agnostic)
+│   │   │   ├── interfaces.go       # AuthProvider, TokenValidator (provider-agnostic contracts)
+│   │   │   ├── middleware.go        # Auth middleware (uses AuthProvider interface — no provider knowledge)
+│   │   │   ├── handler.go          # /auth/* routes (delegates to AuthProvider)
+│   │   │   └── supabase/           # ← SWAPPABLE: Supabase provider (implements AuthProvider)
+│   │   │       ├── client.go       # Supabase SDK client
+│   │   │       └── config.go       # Supabase-specific config
+│   │   │       # Future: casdoor/, keycloak/, auth0/ — same AuthProvider interface
+│   │   ├── billing/                 # Subscription & payment (provider-agnostic)
+│   │   │   ├── interfaces.go       # BillingProvider, SubscriptionChecker (provider-agnostic contracts)
+│   │   │   ├── gate.go             # Subscription gate middleware (uses SubscriptionChecker interface)
+│   │   │   └── stripe/             # ← SWAPPABLE: Stripe provider (implements BillingProvider)
+│   │   │       ├── client.go       # Stripe SDK client
+│   │   │       ├── checkout.go     # Stripe-specific checkout session
+│   │   │       ├── webhook.go      # Stripe-specific webhook + signature validation
+│   │   │       └── config.go       # Stripe-specific config
+│   │   │       # Future: lemonsqueezy/, paddle/ — same BillingProvider interface
+│   │   ├── notification/            # Generic notification dispatch (provider-agnostic)
+│   │   │   ├── interfaces.go       # NotificationPayload, Sender, AccountLinker, Dispatcher
+│   │   │   ├── dispatcher.go       # Route payload → correct Sender by channel
+│   │   │   └── telegram/           # ← SWAPPABLE: Telegram channel (implements Sender + AccountLinker)
+│   │   │       ├── sender.go       # Telegram Bot API sender
+│   │   │       ├── linker.go       # Account linking (deep-link, webhook, confirm)
+│   │   │       ├── handler.go      # /telegram/* webhook routes
+│   │   │       └── config.go       # Telegram-specific config
+│   │   │       # Future: discord/, slack/, email/ — each implements Sender
+│   │   ├── eventbus/                # Generic event pub/sub (provider-agnostic)
+│   │   │   ├── interfaces.go       # Publisher, Consumer, Handler (provider-agnostic contracts)
+│   │   │   └── nats/               # ← SWAPPABLE: NATS JetStream (implements Publisher, Consumer)
+│   │   │       ├── client.go       # NATS JetStream implementation
+│   │   │       ├── stream.go       # Stream/consumer config helpers
+│   │   │       └── config.go       # NATS-specific config
+│   │   │       # Future: kafka/, rabbitmq/ — same Publisher/Consumer interface
 │   │   ├── health/                  # /health, /ready endpoints
 │   │   ├── user/                    # User profile (timezone, settings — domain-agnostic)
 │   │   ├── admin/                   # Admin middleware + generic user management
@@ -491,12 +507,16 @@ investment-intel/
     └── 100-199: app_*               # Domain schema (strategies, alerts, watchlist, projects)
 ```
 
-**Structure Decision**: Domain-decoupled platform architecture (backend + AI service + frontend + agent gateway).
+**Structure Decision**: Domain-decoupled platform architecture with provider abstraction (backend + AI service + frontend + agent gateway).
 Chosen because the platform capabilities (auth, billing, notification, event bus, AI agents) are
-domain-agnostic and must be reusable for non-investment domains in the future. The investment-specific
-business logic is isolated in `domain/investment/` directories across all services, connected to the
-platform via well-defined interfaces. See [architecture-domain-decoupling.md](./architecture-domain-decoupling.md)
-for the full architecture decision record with interface definitions and migration rules.
+domain-agnostic and must be reusable for non-investment domains in the future. Additionally, each
+platform concern separates **provider-agnostic interfaces** from **swappable provider implementations**
+(Supabase, Stripe, Telegram, NATS are POC providers — each can be swapped to Casdoor, LemonSqueezy,
+Discord, Kafka, etc. by adding a new provider subdirectory and changing one wiring line in `main.go`).
+The investment-specific business logic is isolated in `domain/investment/` directories across all
+services, connected to the platform via well-defined interfaces. See
+[architecture-domain-decoupling.md](./architecture-domain-decoupling.md) for the full architecture
+decision record with interface definitions, provider abstraction patterns, and migration rules.
 
 ---
 
