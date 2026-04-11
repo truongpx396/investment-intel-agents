@@ -29,10 +29,10 @@ Investment Intel AI Agents is a POC platform that lets users configure **rule-ba
 ## Architecture
 
 ```
-┌─────────────┐     HTTPS      ┌──────────────┐     NATS      ┌──────────────────┐
+┌─────────────┐     HTTPS      ┌──────────────┐     NATS      ┌───────────────────┐
 │  React SPA  │ ──────────────→│  Go Backend  │ ────────────→ │  Alert Dispatcher │
 │  (Vite +    │  TanStack      │  (REST API)  │  JetStream    │  (Telegram Bot)   │
-│  React 19)  │  Query         │              │               └──────────────────┘
+│  React 19)  │  Query         │              │               └───────────────────┘
 └─────────────┘                │              │
        │                       │              │  HTTP    ┌──────────────────┐
        │                       │  Signal      │ ───────→ │  Python ai-svc   │
@@ -50,14 +50,25 @@ Investment Intel AI Agents is a POC platform that lets users configure **rule-ba
                                └──────────────┘
 ```
 
+### Domain-Decoupled Platform Architecture
+
+The codebase follows a **domain-decoupled platform** design (see [ADR](specs/001-investment-intel-poc/architecture-domain-decoupling.md)) where cross-cutting capabilities (auth, billing, notification, event bus) are isolated from investment-specific business logic. Each platform concern defines **provider-agnostic interfaces**; swapping a provider (e.g., Supabase → Casdoor, Stripe → LemonSqueezy) requires only a new provider directory — zero changes to middleware, domain code, or other providers.
+
+- **`platform/`** — domain-agnostic: auth, billing, notification, event bus, health, user profile, admin
+- **`domain/investment/`** — investment-specific: strategies, signals, alerts, watchlist, market data
+- **Platform tables** use `platform_` namespace; **domain tables** use `app_` namespace; **Agent Gateway** uses `gc_` namespace
+
 ### Service Responsibility
 
 | Service | Owns | Does NOT |
 |---------|------|----------|
-| **Go Backend** | REST API, auth, signal evaluation, alert dispatch, Telegram linking, billing | Call LLM, compute indicators, run digest |
-| **Python ai-service** | Technical indicators (pandas-ta), news fetching, sentiment scoring | Evaluate thresholds, send Telegram, touch NATS |
-| **Agent Gateway** | Digest orchestration, LLM summarisation (Claude), digest Telegram delivery | Connect to NATS, dispatch real-time alerts |
-| **React SPA** | All user-facing UI, config forms, history views | Call APIs directly, store secrets |
+| **Go Backend — Platform** | REST API server, auth middleware, billing gate, notification dispatch, event bus, health | Import domain code, call LLM, know about strategies or market data |
+| **Go Backend — Domain** | Signal evaluation, alert formatting, strategy CRUD, watchlist, market data adapters | Import provider SDKs directly, implement auth/billing logic |
+| **Python ai-service — Platform** | Compute engine, enrichment pipeline, content provider interfaces | Know about crypto indicators or news providers |
+| **Python ai-service — Domain** | Technical indicators (pandas-ta), news fetching, sentiment scoring | Evaluate thresholds, send Telegram, touch NATS |
+| **Agent Gateway — Framework** | Cron scheduling, LLM provider, Telegram channel, HTTP fetch | Connect to NATS, dispatch real-time alerts, contain domain logic |
+| **Agent Gateway — Domain Skills** | Digest persona, crypto-digest skill | Bypass framework tools, directly access databases |
+| **React SPA** | Platform pages (auth, billing, settings) + domain pages (dashboard, strategies, alerts) | Call APIs directly, store secrets |
 
 ---
 
@@ -105,30 +116,52 @@ Investment Intel AI Agents is a POC platform that lets users configure **rule-ba
 investment-intel-agents/
 │
 ├── backend/                          # Go API service
-│   ├── cmd/server/main.go
-│   ├── internal/
-│   │   ├── auth/                     # JWT validation, Supabase integration
-│   │   ├── config/                   # Seed config loader (seed.go)
-│   │   ├── strategies/               # Strategy CRUD, SDF validation, import/export
-│   │   ├── signals/                  # Signal evaluator (30s polling loop)
-│   │   ├── alerts/                   # Alert persistence, dispatcher, re-driver
-│   │   ├── watchlist/                # Watchlist CRUD
-│   │   ├── telegram/                 # Telegram account linking
-│   │   └── billing/                  # Stripe subscription + webhook handler
-│   ├── pkg/
-│   │   ├── marketdata/               # Market data adapters (CoinGecko, CryptoCompare)
-│   │   └── nats/                     # NATS publisher/subscriber helpers
+│   ├── cmd/server/main.go            # Wires providers + platform + domain; starts server
+│   ├── platform/                     # Domain-agnostic layer (reusable across projects)
+│   │   ├── auth/                     # Auth interfaces + middleware
+│   │   │   ├── interfaces.go         # AuthProvider, TokenValidator
+│   │   │   ├── middleware.go          # Auth middleware (provider-agnostic)
+│   │   │   └── supabase/             # Swappable: Supabase provider
+│   │   ├── billing/                  # Billing interfaces + gate middleware
+│   │   │   ├── interfaces.go         # BillingProvider, SubscriptionChecker
+│   │   │   └── stripe/               # Swappable: Stripe provider
+│   │   ├── notification/             # Notification dispatch (provider-agnostic)
+│   │   │   ├── interfaces.go         # Sender, AccountLinker, Dispatcher
+│   │   │   └── telegram/             # Swappable: Telegram channel
+│   │   ├── eventbus/                 # Event pub/sub (provider-agnostic)
+│   │   │   ├── interfaces.go         # Publisher, Consumer
+│   │   │   └── nats/                 # Swappable: NATS JetStream
+│   │   ├── health/                   # /health, /ready endpoints
+│   │   ├── user/                     # User profile (timezone, settings)
+│   │   ├── admin/                    # Admin middleware + user management
+│   │   └── server/                   # HTTP server setup, router mounting
+│   ├── domain/                       # Domain-specific layer (swappable)
+│   │   └── investment/               # Investment intelligence domain module
+│   │       ├── register.go           # Mounts routes, consumers, workers
+│   │       ├── strategies/           # Strategy CRUD, SDF validation, import/export
+│   │       ├── signals/              # Signal evaluator (30s polling loop)
+│   │       ├── alerts/               # Alert persistence, dispatcher, re-driver
+│   │       ├── watchlist/            # Watchlist CRUD, digest content
+│   │       ├── marketdata/           # Market data adapters (CoinGecko, CryptoCompare)
+│   │       └── config/               # Seed config loader (signal types, projects)
+│   ├── pkg/                          # Shared utilities (domain-agnostic)
+│   │   ├── httputil/                 # HTTP helpers, error response envelope
+│   │   ├── validate/                 # JSON Schema validation helpers
+│   │   └── testutil/                 # Test fixtures, DB helpers
 │   └── tests/
-│       ├── contract/                 # HTTP contract tests
-│       ├── integration/              # End-to-end service tests
-│       └── unit/                     # Pure unit tests
+│       ├── platform/                 # Platform contract + integration tests
+│       └── domain/investment/        # Domain-specific tests (contract, integration, unit)
 │
 ├── ai-service/                       # Python AI/data service
 │   ├── src/
-│   │   ├── indicators/               # RSI, MACD, Bollinger, volume spike, pct_change
-│   │   ├── news/                     # CryptoPanic + DuckDuckGo adapters
-│   │   ├── enrichment/               # VADER sentiment + deduplication
-│   │   └── projects/                 # DB-backed project registry
+│   │   ├── platform/                 # Domain-agnostic (reusable)
+│   │   │   ├── compute/              # Generic computation engine (cache, resample)
+│   │   │   ├── enrichment/           # Generic content enrichment (VADER sentiment, dedup)
+│   │   │   └── content/              # ContentProvider ABC, ContentItem dataclass
+│   │   └── domain/investment/        # Investment-specific
+│   │       ├── indicators/           # RSI, MACD, Bollinger, volume spike, pct_change
+│   │       ├── news/                 # CryptoPanic + DuckDuckGo adapters
+│   │       └── projects/             # DB-backed project registry
 │   └── tests/
 │
 ├── agent-gateway/                     # Pluggable agent gateway (see agent-gateway-abstraction.md)
@@ -450,6 +483,8 @@ See [Agent Gateway Abstraction](specs/001-investment-intel-poc/agent-gateway-abs
 | Feature Specification | [`specs/001-investment-intel-poc/spec.md`](specs/001-investment-intel-poc/spec.md) | Requirements, user stories, acceptance criteria |
 | Implementation Plan | [`specs/001-investment-intel-poc/plan.md`](specs/001-investment-intel-poc/plan.md) | Architecture, service matrix, research notes |
 | Task List | [`specs/001-investment-intel-poc/tasks.md`](specs/001-investment-intel-poc/tasks.md) | 110 tasks across 11 phases |
+| Agent Gateway Abstraction | [`specs/001-investment-intel-poc/agent-gateway-abstraction.md`](specs/001-investment-intel-poc/agent-gateway-abstraction.md) | Pluggable gateway interface contract, switching guide, framework comparison |
+| Domain Decoupling ADR | [`specs/001-investment-intel-poc/architecture-domain-decoupling.md`](specs/001-investment-intel-poc/architecture-domain-decoupling.md) | Platform/domain separation, provider-agnostic interfaces, migration namespaces |
 | REST API Contracts | `specs/001-investment-intel-poc/contracts/rest-api.md` | Endpoint signatures, error envelope |
 | NATS Events | `specs/001-investment-intel-poc/contracts/nats-events.md` | Stream topology, message schemas |
 | Constitution | [`.specify/memory/constitution.md`](.specify/memory/constitution.md) | Quality gates, development workflow |

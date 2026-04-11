@@ -16,6 +16,12 @@ subscription management run through Stripe.
 The AI agent layer (Agent Gateway) orchestrates the digest pipeline: a scheduled cron agent polls
 the news API, invokes the LLM summarisation tool, and dispatches the Telegram digest — replacing
 bespoke Python orchestration with the Agent Gateway's built-in cron, HTTP fetch, and message tools.
+Beyond the daily digest, the Agent Gateway runs two additional skills: **Anomaly Explanation**
+enriches every fired alert with a short LLM-generated explanation of why the signal triggered
+(fetches news + market context at fire time; non-blocking — alert delivers even if the LLM call
+fails); **Market Sentiment Pulse** runs on a configurable cron (default every 4 h), classifies
+overall market sentiment (bullish / neutral / bearish) from recent news via the LLM, stores the
+score, and optionally pushes a short Telegram summary.
 
 ### Domain-Decoupled Platform Architecture
 
@@ -188,6 +194,8 @@ A single authoritative reference for which service owns each concern. When in do
 | **Curated project registry** | **Python ai-service** | **Domain** | DB-backed; reads from `app_projects`; cached 5 min; `GET /projects` returns `{slug, display_name, symbol, coingecko_id, quote_currency, is_signal_asset}` |
 | Agent Gateway framework (cron, LLM, Telegram, HTTP fetch) | **Agent Gateway** | **Platform** | Domain-agnostic orchestration capabilities; swappable via [agent-gateway-abstraction.md](./agent-gateway-abstraction.md) |
 | Daily digest agent persona + crypto-digest skill | **Agent Gateway** | **Domain** | Investment-specific skill files in `agents/digest-agent/`; calls ai-service `GET /news/{slug}`, `POST /enrich/news`; uses LLM for summarisation |
+| Anomaly explanation enrichment | **Agent Gateway** | **Domain** | Investment-specific: on signal fire, fetches news + market context via ai-service, invokes LLM to explain the cause, returns explanation text to Go dispatcher for appending to alert; non-blocking (alert delivers without explanation on failure) |
+| Market sentiment pulse skill | **Agent Gateway** | **Domain** | Investment-specific skill in `agents/sentiment-agent/`; cron-scheduled (default every 4 h); fetches top N news items via ai-service, classifies sentiment via LLM, stores score via backend `/internal/sentiment` endpoint, optionally sends Telegram push |
 | Telegram digest delivery | **Agent Gateway** | **Platform** | Agent Gateway Telegram channel; same bot as Go alert dispatcher (single bot, see §Single Telegram Bot) |
 | UI component primitives (Button, Card, Input, etc.) | **React SPA** | **Platform** | Reusable design system with Storybook stories |
 | Auth, billing, settings, admin pages | **React SPA** | **Platform** | Domain-agnostic user-facing pages |
@@ -202,10 +210,15 @@ A single authoritative reference for which service owns each concern. When in do
 | React SPA | Go backend | HTTPS REST (`/api/v1/`) | Supabase JWT (httpOnly cookie) |
 | Agent Gateway digest agent | Go backend | HTTPS REST (`/internal/`) | Static bearer token (`AGENT_GATEWAY_INTERNAL_TOKEN`) |
 | Agent Gateway digest agent | Python ai-service | HTTP fetch via `GET /news/{slug}`, `POST /enrich/news`, `GET /projects` | None (internal network only) |
+| Agent Gateway anomaly agent | Python ai-service | HTTP fetch via `GET /news/{slug}`, `POST /indicators/{asset}` | None (internal network only) |
+| Agent Gateway anomaly agent | Go backend | HTTPS REST (`/internal/alerts/:id/explanation`) | Static bearer token (`AGENT_GATEWAY_INTERNAL_TOKEN`) |
+| Agent Gateway sentiment agent | Python ai-service | HTTP fetch via `GET /news/{slug}`, `GET /projects` | None (internal network only) |
+| Agent Gateway sentiment agent | Go backend | HTTPS REST (`/internal/sentiment`) | Static bearer token (`AGENT_GATEWAY_INTERNAL_TOKEN`) |
 | Go backend (signal evaluator) | Python ai-service | HTTP `POST /indicators/{asset}`, `POST /pct_change/{asset}` | None (internal network only) |
+| Go backend (alert dispatcher) | Agent Gateway anomaly agent | Internal trigger (NATS → Go calls Agent Gateway HTTP or Agent Gateway subscribes to `signal.triggered.>`) | Internal |
 | Go backend | NATS JetStream | NATS protocol | NATS credentials |
 | Go backend | Telegram Bot API | HTTPS | `TELEGRAM_BOT_TOKEN` (shared single bot) |
-| Agent Gateway | Telegram (digest) | Agent Gateway Telegram channel | Same `TELEGRAM_BOT_TOKEN` configured as `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN` |
+| Agent Gateway | Telegram (digest + sentiment) | Agent Gateway Telegram channel | Same `TELEGRAM_BOT_TOKEN` configured as `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN` |
 | Go backend | Supabase (Auth + DB) | HTTPS + postgres:// | Supabase service role key + RLS |
 | Go backend | Stripe | HTTPS | Stripe secret key + webhook signing secret |
 | Go backend | CoinGecko / CryptoCompare | HTTPS | No key / free-tier key |
@@ -259,17 +272,17 @@ Key capabilities required from the gateway:
 
 | Required Capability | POC Usage |
 |---------------------|-----------|
-| **Cron scheduling** | Daily digest trigger at 08:30 UTC |
-| **HTTP fetch tool** | Fetches news items from crypto news API per watchlist project |
-| **LLM provider (Anthropic)** | Summarises raw news items via claude-3-5-haiku |
-| **Telegram channel** | Dispatches digest messages and (future) alert escalation |
-| **Shared PostgreSQL** | Gateway shares the same Postgres instance; per-user agent contexts |
-| **Message tool** | Sends formatted digest to each user's Telegram chat |
+| **Cron scheduling** | Daily digest trigger at 08:30 UTC; sentiment pulse every 4 h (configurable via `SENTIMENT_PULSE_CRON`) |
+| **HTTP fetch tool** | Fetches news items from crypto news API per watchlist project; fetches market context for anomaly explanation |
+| **LLM provider (Anthropic)** | Summarises raw news items via claude-3-5-haiku; generates anomaly explanations; classifies market sentiment |
+| **Telegram channel** | Dispatches digest messages, sentiment pulse summaries, and (future) alert escalation |
+| **Shared PostgreSQL** | Gateway shares the same Postgres instance; per-user agent contexts; sentiment scores stored via `/internal/sentiment` |
+| **Message tool** | Sends formatted digest / sentiment summary to each user's Telegram chat |
 | **Subagent / parallel execution** | Parallel HTTP fetch per watchlist project with automatic retry |
-| **Scoped permissions** | Scope digest agent's backend API access to specific `/internal/` endpoints |
+| **Scoped permissions** | Scope agent backend API access to specific `/internal/` endpoints (watchlist, users, sentiment) |
 | **Observability (OTLP)** | LLM call tracing feeds Prometheus/Grafana |
 
-**Deployment**: The Agent Gateway runs as a **single Docker container** (dashboard at `http://localhost:18790`) alongside backend services, connected to the shared Postgres and Redis instances. NATS is not used by the gateway directly — the Go signal service publishes to NATS; the gateway operates on its own scheduler for digest tasks.
+**Deployment**: The Agent Gateway runs as a **single Docker container** (dashboard at `http://localhost:18790`) alongside backend services, connected to the shared Postgres and Redis instances. NATS is not used by the gateway directly — the Go signal service publishes to NATS; the gateway operates on its own scheduler for digest and sentiment tasks.
 
 ### Single Telegram Bot Architecture
 
@@ -280,10 +293,57 @@ The system uses **one Telegram bot** (`TELEGRAM_BOT_TOKEN`) shared between Go ba
 | Account linking (`/start?token=`) | **Go backend** | Telegram webhook registered at `https://api.<domain>/telegram/webhook`; Go processes `/start` deep-link updates and linking confirmation messages |
 | Real-time alert delivery | **Go backend** | Direct `sendMessage` API call via bot token; latency-critical path (< 60 s SLA) |
 | Daily digest delivery | **Agent Gateway** | Agent Gateway Telegram channel configured with the same bot token (`AGENT_GATEWAY_TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN`); uses message tool to call `sendMessage` |
+| Sentiment pulse push | **Agent Gateway** | Same Telegram channel as digest; sends short sentiment summary when `sentiment_push_enabled = TRUE` for the user |
 
 **Webhook routing**: Telegram delivers all bot updates (messages, commands) to the single registered webhook URL owned by Go backend. The Agent Gateway never receives inbound updates — it only **sends** outbound messages via `sendMessage`. This avoids the Telegram limitation of one webhook per bot. The Go backend MUST filter webhook updates to only process `/start` commands for account linking; all other inbound messages are ignored (no command router needed for POC).
 
 **Configuration**: Both services read the same bot token from the environment. In `docker-compose.yml`, set `TELEGRAM_BOT_TOKEN` once and reference it in both Go backend and Agent Gateway service definitions (`AGENT_GATEWAY_TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}`).
+
+### Anomaly Explanation Architecture
+
+When a signal fires, the Go alert dispatcher enriches the alert with an LLM-generated explanation before sending the Telegram notification. The flow:
+
+1. **Signal fires** → Go evaluator publishes `signal.triggered.{asset}` to NATS (existing flow)
+2. **Alert dispatcher** consumes the event, persists the Alert record (existing flow)
+3. **Explanation enrichment** (new step, non-blocking):
+   - Dispatcher calls ai-service `GET /news/{asset}` to fetch recent news (reuses existing adapter)
+   - Dispatcher calls ai-service `POST /indicators/{asset}` (or cached response) for 24 h market context
+   - Dispatcher sends news items + market context + signal metadata to the Agent Gateway anomaly agent via an internal HTTP call (`POST /internal/explain`), which invokes the LLM (claude-3-5-haiku, ≤ 150 tokens) to generate a 1–2 sentence explanation
+   - **Alternative (simpler)**: Go dispatcher calls `POST ai-service/explain/{asset}` — a new ai-service endpoint that wraps the LLM call directly, avoiding the Agent Gateway for this latency-sensitive path; the ai-service caches the Anthropic API key and makes a direct `httpx` call to the Claude API
+4. **Timeout guard**: the entire explanation step is wrapped in a 10 s context deadline; on timeout, the explanation is `NULL` and the alert proceeds without it
+5. **Persistence**: the explanation text is saved to `app_alerts.explanation` (new `TEXT` column, nullable)
+6. **Telegram delivery**: the notification message includes the explanation appended below the standard alert fields (or omitted if `NULL`)
+
+**LLM prompt design**: The anomaly explanation prompt includes: signal type + threshold, current value, asset name, 24 h price movement (OHLCV), and up to 5 recent news headlines. The system prompt instructs the LLM to produce exactly 1–2 sentences explaining the likely cause, and to state "no specific news catalyst identified" if no relevant news is provided.
+
+**Metrics**: `anomaly_explanation_latency_seconds` (histogram), `anomaly_explanation_failures_total` (counter by failure reason: timeout, llm_error, news_fetch_error).
+
+### Market Sentiment Pulse Architecture
+
+A lightweight scheduled Agent Gateway skill that provides periodic market sentiment classification.
+
+**Flow**:
+
+1. **Cron trigger**: Agent Gateway fires the sentiment-pulse skill at the configured interval (env `SENTIMENT_PULSE_CRON`, default `0 */4 * * *` = every 4 h)
+2. **Per-user processing**: the skill calls `GET /internal/users?has_watchlist=true` to get users with active watchlists
+3. **News fetch**: for each user, the skill calls ai-service `GET /news/{slug}` for each watchlisted project (parallelised via subagent `waitAll`), collects the top N items (env `SENTIMENT_NEWS_LIMIT`, default 10)
+4. **Sentiment classification**: the skill passes the collected news items to the LLM (claude-3-5-haiku, ≤ 100 tokens) with a structured prompt requesting JSON output: `{ "score": "bullish|neutral|bearish", "confidence": 0.0-1.0, "summary": "..." }`
+5. **Persistence**: the skill calls `POST /internal/sentiment` on the Go backend to store the score in `app_sentiment_scores` (new table: `id`, `user_id`, `score` enum, `confidence` numeric, `summary` text, `news_item_count` int, `scored_at` timestamp); index: `idx_sentiment_user_scored(user_id, scored_at DESC)`
+6. **Optional Telegram push**: if `app_users.sentiment_push_enabled = TRUE`, the skill sends a short Telegram message via the message tool (e.g., "🟢 Bullish — ETF momentum + SOL DeFi TVL growth driving positive sentiment")
+
+**Configuration**:
+- `SENTIMENT_PULSE_CRON`: cron expression (default `0 */4 * * *`)
+- `SENTIMENT_NEWS_LIMIT`: max news items per pulse (default `10`)
+- `app_users.sentiment_push_enabled`: per-user opt-in for Telegram push (default `FALSE`)
+
+**Database changes**:
+- New table `app_sentiment_scores` (migration `008_sentiment.sql`)
+- New column `app_users.sentiment_push_enabled BOOLEAN DEFAULT FALSE` (migration `008a_users_sentiment.sql`)
+- RLS enabled on `app_sentiment_scores`, scoped to `user_id`
+
+**API endpoints** (Go backend):
+- `POST /internal/sentiment` — Agent Gateway stores a new score (internal auth)
+- `GET /api/v1/sentiment?limit=N` — authenticated user retrieves their sentiment history (default limit 20, max 100)
 
 ---
 
@@ -448,10 +508,18 @@ investment-intel/
 │   │   └── agents/
 │   │       ├── _platform/           # DOMAIN-AGNOSTIC agent utilities (reusable)
 │   │       │   └── HEARTBEAT.md
-│   │       └── digest-agent/        # DOMAIN-SPECIFIC: investment digest
-│   │           ├── AGENT.md         # Investment persona + instructions
+│   │       ├── digest-agent/        # DOMAIN-SPECIFIC: investment digest
+│   │       │   ├── AGENT.md         # Investment persona + instructions
+│   │       │   └── skills/
+│   │       │       └── crypto-digest.md
+│   │       ├── anomaly-agent/       # DOMAIN-SPECIFIC: anomaly explanation enrichment
+│   │       │   ├── AGENT.md         # Persona: explains why a signal fired
+│   │       │   └── skills/
+│   │       │       └── anomaly-explanation.md
+│   │       └── sentiment-agent/     # DOMAIN-SPECIFIC: market sentiment pulse
+│   │           ├── AGENT.md         # Persona: classifies market sentiment
 │   │           └── skills/
-│   │               └── crypto-digest.md
+│   │               └── sentiment-pulse.md
 │   ├── openclaw/
 │   ├── picoclaw/
 │   ├── nanobot/
@@ -899,3 +967,19 @@ Key findings to carry into implementation:
 - Stripe webhook events consumed by `platform/billing/`: `customer.subscription.created`,
   `customer.subscription.deleted`, `invoice.payment_failed`
 - Subscription status stored on `users` table; middleware checks status on protected routes
+
+### Anomaly Explanation
+- **LLM model**: claude-3-5-haiku via direct Anthropic API call from ai-service (not via Agent Gateway — latency-sensitive path must avoid the gateway's scheduling overhead)
+- **Token budget**: ≤ 150 output tokens; input = signal metadata (~50 tokens) + up to 5 news headlines (~200 tokens) + 24 h OHLCV summary (~50 tokens) = ~300 input tokens → total ~450 tokens per explanation
+- **Cost estimate**: ~450 tokens × $0.25/MTok (haiku input) + 150 × $1.25/MTok (haiku output) ≈ $0.0003/explanation; at 100 alerts/day = ~$0.03/day
+- **Latency budget**: 10 s hard timeout; typical haiku response in 1–3 s; news fetch cached from recent digest/sentiment runs reduces cold-start
+- **Fallback strategy**: timeout → deliver alert without explanation; news fetch failure → use market-context-only prompt; LLM error → deliver alert without explanation; all failures logged + metriced
+- **ai-service endpoint**: `POST /explain/{asset}` — new endpoint in `ai-service/src/enrichment/explanation.py`; accepts `{ signal_type, threshold, current_value, news_items[], price_stats }`, calls Anthropic API, returns `{ explanation: string }`; cached at `explanation:{asset}:{signal_rule_id}:{minute}` with TTL = 55 s (prevents duplicate LLM calls if the same rule fires on consecutive ticks within cooldown edge cases)
+
+### Market Sentiment Pulse
+- **LLM model**: claude-3-5-haiku via Agent Gateway LLM provider (same as digest — not latency-sensitive, so gateway scheduling overhead is acceptable)
+- **Token budget**: ≤ 100 output tokens; input = up to 10 news headlines (~400 tokens) + structured prompt (~100 tokens) = ~500 input tokens → total ~600 tokens per pulse per user
+- **Cost estimate**: ~600 tokens × $0.25/MTok (haiku input) + 100 × $1.25/MTok (haiku output) ≈ $0.0003/pulse/user; at 50 users × 6 pulses/day = ~$0.09/day
+- **CryptoPanic quota impact**: sentiment pulse reuses the same news adapter as digest; at 6 pulses/day × 50 users × ~2 projects avg = 600 CryptoPanic calls/day — exceeds 50 req/day free tier; **mitigation**: (a) cache news responses at ai-service level with 30 min TTL (sentiment pulse doesn't need real-time freshness); (b) share cached news across users with overlapping watchlists; (c) DuckDuckGo fallback on quota exhaustion (existing adapter); (d) consider a single "global" sentiment pulse that evaluates market-wide sentiment once and stores it for all users, rather than per-user evaluation — reduces LLM + news API calls from O(users) to O(1)
+- **Structured output**: LLM prompt requests JSON `{ "score": "bullish|neutral|bearish", "confidence": 0.0-1.0, "summary": "..." }`; Agent Gateway skill parses the response and rejects malformed output (retries once); if both attempts fail, score is recorded as `neutral` with confidence `0.0`
+- **Sentiment trend**: over time, stored sentiment scores enable a trend line visible on the dashboard (post-POC UI enhancement); the API `GET /sentiment?limit=N` returns the most recent scores for chart rendering

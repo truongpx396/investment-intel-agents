@@ -102,6 +102,73 @@ one item per watchlisted project and must not include projects not on the watchl
 
 ---
 
+### User Story 6 — Anomaly Explanation (Priority: P3)
+
+When a signal alert fires (e.g., "BTC RSI crossed 70"), the raw threshold breach alone is not
+actionable enough. The user wants to understand **why** the signal fired — what market event or
+news drove the price action. The system enriches the alert with a short LLM-generated explanation
+by fetching surrounding market context and recent news at the moment the signal triggers.
+
+**Why this priority**: Anomaly Explanation transforms a mechanical alert into an insight. It is
+lower priority than core signal delivery (US2) because the raw alert is still valuable without
+the explanation, but it significantly increases the utility of every notification.
+
+**Independent Test**: A user with an active BTC price-threshold strategy receives a Telegram
+alert. The alert message includes a 1–2 sentence explanation referencing a relevant market event
+or news headline that likely caused the price movement — not just the raw threshold values.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user with an active BTC RSI strategy and a linked Telegram account, **When** the
+   RSI crosses the configured threshold, **Then** the Telegram notification includes the standard
+   alert fields (asset, signal type, current value, threshold) **plus** a 1–2 sentence
+   explanation (e.g., "…likely due to ETF approval news driving institutional inflows").
+2. **Given** a signal fire on an asset with no recent news available, **When** the anomaly
+   explanation is generated, **Then** the explanation falls back to market context only (e.g.,
+   "Broad market rally; BTC correlation with ETH at 0.92 over the past 24 h") and does not
+   hallucinate specific news events.
+3. **Given** the LLM explanation step fails (timeout, rate limit, or error), **When** the alert
+   is dispatched, **Then** the alert is still delivered with the standard fields but without the
+   explanation; the system logs the failure and does not block or delay alert delivery.
+4. **Given** a user with a paused strategy, **When** the signal condition is met, **Then** no
+   alert or explanation is generated.
+
+---
+
+### User Story 7 — Market Sentiment Pulse (Priority: P3)
+
+A user wants a lightweight, periodic pulse on overall market sentiment for their watchlisted
+assets without waiting for the full daily digest. Every few hours, the system fetches the latest
+news headlines, classifies overall sentiment (bullish / neutral / bearish) via the LLM, stores
+the sentiment score, and optionally pushes a short Telegram summary.
+
+**Why this priority**: Market Sentiment Pulse is a lightweight scheduled Agent Gateway skill that
+provides ambient awareness between daily digests. It is lower priority because the daily digest
+already covers news, but the sentiment trend over time becomes a useful standalone signal.
+
+**Independent Test**: A user with at least one project on their watchlist and sentiment push
+enabled receives a short Telegram message every 4 hours (configurable) classifying overall
+market sentiment. The sentiment score for each pulse is stored and retrievable via the API.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user with SOL and ARB on their watchlist and sentiment push enabled, **When** the
+   sentiment pulse cron fires, **Then** the system fetches the top 10 (configurable) recent news
+   items across their watchlisted projects, classifies overall sentiment via the LLM, stores the
+   score, and sends a short Telegram message (e.g., "🟢 Bullish — ETF momentum + SOL DeFi TVL
+   growth driving positive sentiment").
+2. **Given** a user with sentiment push **disabled**, **When** the sentiment pulse runs, **Then**
+   the sentiment score is still computed and stored (available via API / dashboard) but no
+   Telegram message is sent.
+3. **Given** fewer than the configured number of news items are available, **When** the sentiment
+   pulse runs, **Then** the system proceeds with however many items are available and classifies
+   sentiment from the reduced set; if zero items are available, the score is recorded as
+   "neutral" with a note.
+4. **Given** the sentiment pulse interval is configured to 2 hours, **When** time passes,
+   **Then** the pulse runs every 2 hours instead of the default 4 hours.
+
+---
+
 ### User Story 4 — Telegram Account Linking (Priority: P1)
 
 A user connects their Telegram account to the web app so that notifications and digests can be
@@ -355,6 +422,53 @@ strategy — without any notification or digest feature needing to be present.
   MUST return the strategy in SDF format. Both endpoints are part of the REST API and require
   authentication.
 
+**Anomaly Explanation**
+
+- **FR-029**: When a signal alert fires, the system MUST attempt to generate a short LLM
+  explanation (1–2 sentences) describing the likely cause of the signal condition. The explanation
+  step MUST fetch recent news items (via the existing CryptoPanic / DuckDuckGo news adapter) and
+  surrounding market context (24 h price movement from the existing `price_stats` endpoint) for
+  the triggering asset, pass them to the LLM (claude-3-5-haiku via Agent Gateway or direct API),
+  and append the resulting explanation to the alert's Telegram notification message.
+- **FR-030**: The anomaly explanation MUST be **non-blocking** — if the LLM call fails (timeout,
+  rate limit, or error), the alert MUST still be delivered with the standard fields (asset, signal
+  type, current value, threshold, strategy name) but without the explanation. The failure MUST be
+  logged and a Prometheus counter (`anomaly_explanation_failures_total`) incremented.
+- **FR-031**: When no recent news is available for the triggering asset, the explanation MUST
+  fall back to market-context-only analysis (price movement, correlation with major assets) and
+  MUST NOT hallucinate specific news events. The LLM prompt MUST include an explicit instruction
+  to state "no specific news catalyst identified" when no news items are provided.
+- **FR-032**: The anomaly explanation text MUST be persisted alongside the Alert record (new
+  `explanation` column on `app_alerts`) so it is visible in the alert history view in the web app.
+- **FR-033**: The anomaly explanation step MUST complete within 10 seconds; if the LLM response
+  exceeds this timeout, the system MUST proceed with alert delivery without the explanation to
+  preserve the < 60 s notification SLA (FR-006).
+
+**Market Sentiment Pulse**
+
+- **FR-034**: The system MUST run a scheduled sentiment pulse via the Agent Gateway at a
+  configurable interval (default: every 4 hours). The cron expression MUST be configurable via
+  environment variable (`SENTIMENT_PULSE_CRON`, default: `0 */4 * * *`).
+- **FR-035**: Each sentiment pulse MUST fetch the top N (configurable, default: 10) most recent
+  news items across all watchlisted projects for each user, classify overall sentiment via the
+  LLM (claude-3-5-haiku) as one of: **bullish**, **neutral**, or **bearish**, and store the
+  resulting score with a timestamp.
+- **FR-036**: Sentiment scores MUST be persisted in a new `app_sentiment_scores` table with
+  fields: `id`, `user_id`, `score` (enum: bullish/neutral/bearish), `confidence` (0.0–1.0),
+  `summary` (short LLM-generated rationale, ≤ 100 tokens), `news_item_count` (number of items
+  analysed), `scored_at` (timestamp). Scores MUST be queryable via `GET /sentiment?limit=N` for
+  the authenticated user, ordered by `scored_at DESC`.
+- **FR-037**: If the user has enabled sentiment push notifications (new `sentiment_push_enabled`
+  boolean on `app_users`, default: `FALSE`), the system MUST send a short Telegram message after
+  each pulse with the sentiment classification and a 1-sentence summary (e.g., "🟢 Bullish —
+  ETF momentum + SOL DeFi TVL growth driving positive sentiment").
+- **FR-038**: If fewer than the configured number of news items are available, the system MUST
+  proceed with however many items exist. If zero items are available, the score MUST be recorded
+  as `neutral` with confidence `0.0` and summary "Insufficient news data for sentiment
+  classification"; no Telegram push is sent in this case.
+- **FR-039**: The number of news items fetched per pulse MUST be configurable via environment
+  variable (`SENTIMENT_NEWS_LIMIT`, default: `10`).
+
 ### Key Entities
 
 - **User**: Represents a registered account; holds authentication credentials, timezone
@@ -384,6 +498,14 @@ strategy — without any notification or digest feature needing to be present.
   `contracts/strategy-definition.schema.json` that fully describes a strategy and its signal
   rules in a machine-readable, self-validatable format. Used as the wire format for strategy
   CRUD and import/export; designed as the future target format for LLM-generated strategies.
+- **Anomaly Explanation**: A short LLM-generated text (1–2 sentences) appended to an alert
+  notification describing the likely cause of the signal condition; produced by fetching recent
+  news and market context at signal-fire time and passing them to the LLM. Persisted on the
+  Alert record (`explanation` column) for display in alert history.
+- **Sentiment Score**: A periodic market sentiment classification (bullish / neutral / bearish)
+  generated by the Agent Gateway's sentiment-pulse skill. Each score carries a confidence value
+  (0.0–1.0), a short LLM-generated rationale, and the count of news items analysed. Stored in
+  `app_sentiment_scores` and optionally pushed to Telegram.
 
 ---
 
@@ -395,7 +517,7 @@ strategy — without any notification or digest feature needing to be present.
   requests MUST receive a 401 response.
 - **NFR-SEC-002**: Row Level Security (RLS) MUST be enabled on all user-scoped application
   tables (`app_strategies`, `app_signal_rules`, `app_alerts`, `app_watchlist_entries`,
-  `app_users`); queries MUST be scoped to the authenticated user's `user_id`. Global reference
+  `app_users`, `app_sentiment_scores`); queries MUST be scoped to the authenticated user's `user_id`. Global reference
   tables (`app_projects`) are public-read and do not require RLS.
 - **NFR-SEC-003**: Stripe webhook endpoints MUST validate the `Stripe-Signature` header; requests
   failing signature verification MUST be rejected with a 400 response.
@@ -421,6 +543,12 @@ strategy — without any notification or digest feature needing to be present.
   during Phase 10 performance validation.
 - **NFR-PERF-005**: Performance regressions exceeding 10% against the established baseline MUST
   block merging until resolved, per constitution Principle IV.
+- **NFR-PERF-006**: The anomaly explanation LLM call MUST complete within 10 seconds. If the
+  timeout is exceeded, alert delivery proceeds without the explanation. The 10 s budget preserves
+  headroom within the < 60 s notification SLA (FR-006).
+- **NFR-PERF-007**: The Agent Gateway sentiment pulse skill MUST complete all user sentiment
+  evaluations within 3 minutes of the scheduled cron trigger. Measurement uses the same OTLP
+  traces and Prometheus metrics as the digest agent (NFR-PERF-004).
 
 ### Reliability
 
@@ -512,3 +640,6 @@ strategy — without any notification or digest feature needing to be present.
 | **Strategy Definition Format (SDF)** | A portable JSON structure (with JSON Schema) that fully represents a strategy and its signal rules. Used as the wire format for `POST /strategies` and `GET /strategies/:id`, and the target format for future LLM-generated strategies ("text → SDF → save"). |
 | **Seed Configuration** | A declarative YAML file (`config/seed.yaml`) that externalises all business-level configuration: signal type definitions with parameter schemas, POC project seed data, and system tunables. Validated against `config/seed.schema.json` at boot. |
 | **Strategy Import** | Bulk creation of strategies via `POST /strategies/import` accepting an array of SDF documents; validates each against the JSON Schema and the same business rules as single creation. |
+| **Anomaly Explanation** | A short LLM-generated text (1–2 sentences) appended to an alert notification that describes the likely market event or news driving the signal condition. Produced at signal-fire time by fetching recent news + market context and passing them to claude-3-5-haiku. Persisted on the Alert record for display in alert history. |
+| **Sentiment Score** | A periodic classification of overall market sentiment (bullish / neutral / bearish) for a user's watchlisted assets, generated by the Agent Gateway sentiment-pulse skill. Carries a confidence value (0.0–1.0), a short rationale, and the count of news items analysed. Stored in `app_sentiment_scores`. |
+| **Sentiment Pulse** | A scheduled Agent Gateway skill that runs at a configurable interval (default: every 4 hours), fetches recent news, classifies market sentiment via the LLM, stores the score, and optionally pushes a short Telegram summary to the user. |
