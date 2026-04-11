@@ -62,7 +62,7 @@ auth, billing, or agent code.
 - **Message queue**: NATS JetStream (signal event fanout, notification queue)
 - **Frontend**: ReactJS 19 + TailwindCSS v4 + TanStack Router + TanStack Query
 - **Component development & docs**: Storybook 8 (`@storybook/react-vite`) — isolated component development, visual regression baseline, and living design-system documentation
-- **LLM (digest summarisation)**: Anthropic Claude (via Agent Gateway provider config, claude-3-5-haiku)
+- **LLM (all AI features)**: Provider-agnostic — configurable via `LLM_PROVIDER` + `LLM_MODEL` env vars; POC default: Anthropic claude-3-5-haiku. ai-service wraps all LLM calls behind an `LLMProvider` interface (`ai-service/src/platform/llm/interfaces.py`); Agent Gateway uses its own pluggable LLM provider config. Swappable to OpenAI, Google Gemini, Mistral, Ollama, or any OpenAI-compatible API by adding a new provider module and changing env vars — no application code changes required
 - **Crypto news API**: CryptoPanic free tier (50 req/day per token; DuckDuckGo fallback on quota
   exhaustion). Abstracted behind `NewsProvider` interface in `ai-service/src/news/`.
 - **Market data feed**: CoinGecko Free API (no key required, ≤30 req/min) for spot price and
@@ -188,6 +188,8 @@ A single authoritative reference for which service owns each concern. When in do
 | **Generic computation engine (cache, resample)** | **Python ai-service** | **Platform** | Reusable compute infrastructure; domain registers `ComputeHandler` implementations |
 | **Generic content enrichment (sentiment, dedup)** | **Python ai-service** | **Platform** | VADER sentiment works for any text content; deduplication is generic |
 | **Generic content provider interface** | **Python ai-service** | **Platform** | `ContentProvider` ABC; domain implements concrete adapters |
+| **LLM provider abstraction** | **Python ai-service** | **Platform** | `LLMProvider` ABC in `platform/llm/interfaces.py`; `anthropic/`, `openai/`, `gemini/` provider modules; factory selects provider via `LLM_PROVIDER` env var; all domain code calls `LLMProvider` — never imports vendor SDK directly |
+| **LLM observability (Langfuse)** | **Python ai-service + Langfuse** | **Platform** | `@observe` decorator on all `LLMProvider` methods; traces prompt/completion/cost/latency; Langfuse dashboard at `http://localhost:3100` |
 | **Technical indicator computation (RSI, MACD, Bollinger, etc.)** | **Python ai-service** | **Domain** | `pandas-ta` / `numpy`; registered as compute handlers; accepts `candle_minutes` parameter to resample 1-min candles; cached at 25 s TTL |
 | **News fetching (CryptoPanic, DuckDuckGo)** | **Python ai-service** | **Domain** | Concrete `ContentProvider` implementations; async `httpx`; quota tracking |
 | **News enrichment routing** | **Python ai-service** | **Domain** | `POST /enrich/news` endpoint wires platform enrichment pipeline with domain-specific config |
@@ -254,8 +256,8 @@ Python ai-service internal endpoints use the same envelope for consistency, thou
 | **Go backend — Platform (interfaces)** | Import any `domain/` package; import any provider subpackage directly (e.g., `platform/auth/middleware.go` MUST NOT import `platform/auth/supabase/`); call LLM APIs directly; know about strategies, signals, or market data; compute technical indicators |
 | **Go backend — Platform (providers)** | Import another provider's SDK (e.g., `platform/auth/supabase/` MUST NOT import Stripe SDK); import `domain/` packages; contain business logic beyond adapter translation |
 | **Go backend — Domain** | Import provider packages directly (use `platform/auth`, `platform/eventbus`, `platform/notification` interfaces only); import NATS/Stripe/Supabase/Telegram SDKs directly; implement auth or billing logic |
-| **Python ai-service — Platform** | Know about crypto indicators, news providers, or project registries; contain investment-specific logic |
-| **Python ai-service — Domain** | Evaluate signal threshold rules (Go domain logic); touch NATS; send Telegram messages; own user-facing Postgres tables |
+| **Python ai-service — Platform** | Know about crypto indicators, news providers, or project registries; contain investment-specific logic; import LLM vendor SDKs outside of `platform/llm/{provider}/` directories |
+| **Python ai-service — Domain** | Evaluate signal threshold rules (Go domain logic); touch NATS; send Telegram messages; own user-facing Postgres tables; import LLM vendor SDKs directly (use `LLMProvider` interface via `platform/llm/`) |
 | **Agent Gateway — Framework** | Contain domain business logic; connect to NATS; perform real-time alert dispatch; own Postgres migrations |
 | **Agent Gateway — Domain Skills** | Bypass the framework's tool system; directly access databases; implement auth or billing |
 | **React SPA — Platform** | Import domain components or pages; contain investment-specific business logic |
@@ -274,13 +276,13 @@ Key capabilities required from the gateway:
 |---------------------|-----------|
 | **Cron scheduling** | Daily digest trigger at 08:30 UTC; sentiment pulse every 4 h (configurable via `SENTIMENT_PULSE_CRON`) |
 | **HTTP fetch tool** | Fetches news items from crypto news API per watchlist project; fetches market context for anomaly explanation |
-| **LLM provider (Anthropic)** | Summarises raw news items via claude-3-5-haiku; generates anomaly explanations; classifies market sentiment |
+| **LLM provider (configurable)** | Summarises raw news items; generates anomaly explanations; classifies market sentiment. Provider set via `LLM_PROVIDER` + `LLM_MODEL` env vars (POC default: Anthropic claude-3-5-haiku) |
 | **Telegram channel** | Dispatches digest messages, sentiment pulse summaries, and (future) alert escalation |
 | **Shared PostgreSQL** | Gateway shares the same Postgres instance; per-user agent contexts; sentiment scores stored via `/internal/sentiment` |
 | **Message tool** | Sends formatted digest / sentiment summary to each user's Telegram chat |
 | **Subagent / parallel execution** | Parallel HTTP fetch per watchlist project with automatic retry |
 | **Scoped permissions** | Scope agent backend API access to specific `/internal/` endpoints (watchlist, users, sentiment) |
-| **Observability (OTLP)** | LLM call tracing feeds Prometheus/Grafana |
+| **Observability (OTLP)** | LLM call tracing feeds both Prometheus/Grafana (generic metrics) and Langfuse (LLM-specific: prompt/completion logging, cost tracking, token usage) via OTLP HTTP endpoint (`/api/public/otel`) |
 
 **Deployment**: The Agent Gateway runs as a **single Docker container** (dashboard at `http://localhost:18790`) alongside backend services, connected to the shared Postgres and Redis instances. NATS is not used by the gateway directly — the Go signal service publishes to NATS; the gateway operates on its own scheduler for digest and sentiment tasks.
 
@@ -308,8 +310,8 @@ When a signal fires, the Go alert dispatcher enriches the alert with an LLM-gene
 3. **Explanation enrichment** (new step, non-blocking):
    - Dispatcher calls ai-service `GET /news/{asset}` to fetch recent news (reuses existing adapter)
    - Dispatcher calls ai-service `POST /indicators/{asset}` (or cached response) for 24 h market context
-   - Dispatcher sends news items + market context + signal metadata to the Agent Gateway anomaly agent via an internal HTTP call (`POST /internal/explain`), which invokes the LLM (claude-3-5-haiku, ≤ 150 tokens) to generate a 1–2 sentence explanation
-   - **Alternative (simpler)**: Go dispatcher calls `POST ai-service/explain/{asset}` — a new ai-service endpoint that wraps the LLM call directly, avoiding the Agent Gateway for this latency-sensitive path; the ai-service caches the Anthropic API key and makes a direct `httpx` call to the Claude API
+   - Dispatcher sends news items + market context + signal metadata to the Agent Gateway anomaly agent via an internal HTTP call (`POST /internal/explain`), which invokes the configured LLM provider (≤ 150 tokens) to generate a 1–2 sentence explanation
+   - **Alternative (simpler)**: Go dispatcher calls `POST ai-service/explain/{asset}` — a new ai-service endpoint that wraps the LLM call directly via the `LLMProvider` interface, avoiding the Agent Gateway for this latency-sensitive path; the ai-service reads `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` from env vars
 4. **Timeout guard**: the entire explanation step is wrapped in a 10 s context deadline; on timeout, the explanation is `NULL` and the alert proceeds without it
 5. **Persistence**: the explanation text is saved to `app_alerts.explanation` (new `TEXT` column, nullable)
 6. **Telegram delivery**: the notification message includes the explanation appended below the standard alert fields (or omitted if `NULL`)
@@ -327,7 +329,7 @@ A lightweight scheduled Agent Gateway skill that provides periodic market sentim
 1. **Cron trigger**: Agent Gateway fires the sentiment-pulse skill at the configured interval (env `SENTIMENT_PULSE_CRON`, default `0 */4 * * *` = every 4 h)
 2. **Per-user processing**: the skill calls `GET /internal/users?has_watchlist=true` to get users with active watchlists
 3. **News fetch**: for each user, the skill calls ai-service `GET /news/{slug}` for each watchlisted project (parallelised via subagent `waitAll`), collects the top N items (env `SENTIMENT_NEWS_LIMIT`, default 10)
-4. **Sentiment classification**: the skill passes the collected news items to the LLM (claude-3-5-haiku, ≤ 100 tokens) with a structured prompt requesting JSON output: `{ "score": "bullish|neutral|bearish", "confidence": 0.0-1.0, "summary": "..." }`
+4. **Sentiment classification**: the skill passes the collected news items to the configured LLM provider (≤ 100 tokens) with a structured prompt requesting JSON output: `{ "score": "bullish|neutral|bearish", "confidence": 0.0-1.0, "summary": "..." }`
 5. **Persistence**: the skill calls `POST /internal/sentiment` on the Go backend to store the score in `app_sentiment_scores` (new table: `id`, `user_id`, `score` enum, `confidence` numeric, `summary` text, `news_item_count` int, `scored_at` timestamp); index: `idx_sentiment_user_scored(user_id, scored_at DESC)`
 6. **Optional Telegram push**: if `app_users.sentiment_push_enabled = TRUE`, the skill sends a short Telegram message via the message tool (e.g., "🟢 Bullish — ETF momentum + SOL DeFi TVL growth driving positive sentiment")
 
@@ -458,6 +460,19 @@ investment-intel/
 │   │   ├── config.py                # Settings via pydantic-settings (env vars, .env)
 │   │   │
 │   │   ├── platform/                # DOMAIN-AGNOSTIC (reusable)
+│   │   │   ├── llm/                 # LLM provider abstraction (provider-agnostic)
+│   │   │   │   ├── interfaces.py    # LLMProvider ABC, LLMResponse dataclass, LLMConfig
+│   │   │   │   ├── factory.py       # create_llm_provider(config) → LLMProvider (reads LLM_PROVIDER env)
+│   │   │   │   ├── anthropic/       # ← SWAPPABLE: Anthropic provider (POC default)
+│   │   │   │   │   ├── client.py    # AnthropicProvider(LLMProvider) — httpx-based
+│   │   │   │   │   └── config.py    # Anthropic-specific config (API key, base URL)
+│   │   │   │   ├── openai/          # ← SWAPPABLE: OpenAI / OpenAI-compatible provider
+│   │   │   │   │   ├── client.py    # OpenAIProvider(LLMProvider)
+│   │   │   │   │   └── config.py
+│   │   │   │   └── gemini/          # ← SWAPPABLE: Google Gemini provider
+│   │   │   │       ├── client.py    # GeminiProvider(LLMProvider)
+│   │   │   │       └── config.py
+│   │   │   │       # Future: mistral/, ollama/, bedrock/ — same LLMProvider interface
 │   │   │   ├── compute/             # Generic computation engine
 │   │   │   │   ├── interfaces.py    # ComputeEngine ABC, ComputeHandler ABC
 │   │   │   │   ├── cache.py         # Redis-backed result cache (generic key pattern)
@@ -557,6 +572,7 @@ investment-intel/
 ├── infra/
 │   ├── docker-compose.yml           # Local dev: all services
 │   ├── docker-compose.prod.yml      # Production overrides
+│   ├── docker-compose.langfuse.yml  # Langfuse LLM observability (opt-in: langfuse-web + langfuse-worker + clickhouse)
 │   ├── traefik/                     # Traefik static + dynamic config
 │   └── monitoring/                  # Prometheus scrape config, Grafana dashboards
 │
@@ -579,8 +595,8 @@ investment-intel/
 Chosen because the platform capabilities (auth, billing, notification, event bus, AI agents) are
 domain-agnostic and must be reusable for non-investment domains in the future. Additionally, each
 platform concern separates **provider-agnostic interfaces** from **swappable provider implementations**
-(Supabase, Stripe, Telegram, NATS are POC providers — each can be swapped to Casdoor, LemonSqueezy,
-Discord, Kafka, etc. by adding a new provider subdirectory and changing one wiring line in `main.go`).
+(Supabase, Stripe, Telegram, NATS, Anthropic are POC providers — each can be swapped to Casdoor, LemonSqueezy,
+Discord, Kafka, OpenAI/Gemini/Mistral, etc. by adding a new provider subdirectory and changing one wiring line in `main.go` or env vars).
 The investment-specific business logic is isolated in `domain/investment/` directories across all
 services, connected to the platform via well-defined interfaces. See
 [architecture-domain-decoupling.md](./architecture-domain-decoupling.md) for the full architecture
@@ -848,7 +864,7 @@ Key findings to carry into implementation:
   by Agent Gateway agent context or via a custom skill that queries backend API)
 - The Agent Gateway shares Postgres with the backend service; schema namespacing required (prefix `gc_` for
   gateway tables vs `app_` for application tables)
-- LLM provider configured via `AGENT_GATEWAY_ANTHROPIC_API_KEY` env var; model set per-agent in AGENT.md
+- LLM provider configured via `AGENT_GATEWAY_LLM_API_KEY` env var + `AGENT_GATEWAY_LLM_PROVIDER` (default `anthropic`) + `AGENT_GATEWAY_LLM_MODEL` (default `claude-3-5-haiku`); model set per-agent in AGENT.md
 - The Agent Gateway's built-in Telegram channel handles bot token + webhook; set `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN`
 
 ### Signal Evaluation
@@ -940,19 +956,23 @@ Key findings to carry into implementation:
 
 **Python dependency stack:**
 - `fastapi` + `uvicorn` — async HTTP
-- `httpx` — async external API calls
+- `httpx` — async external API calls (LLM providers, news APIs)
 - `pandas` + `pandas-ta` — indicator computation
 - `numpy` — OHLCV aggregation
 - `vaderSentiment` — headline sentiment scoring (fast, CPU-only, no GPU needed; sufficient for POC)
 - `redis[asyncio]` — async Redis client
 - `pydantic-settings` — config management
 - `structlog` — JSON structured logging
+- `langfuse` — LLM observability (trace all LLM calls with `@observe` decorator; prompt/completion logging, per-user cost tracking, prompt versioning)
+- `anthropic` — Anthropic SDK (POC default LLM provider; loaded dynamically by `platform/llm/anthropic/`)
+- `openai` — OpenAI SDK (optional; loaded dynamically by `platform/llm/openai/` when `LLM_PROVIDER=openai`)
+- `google-genai` — Google Gemini SDK (optional; loaded dynamically by `platform/llm/gemini/` when `LLM_PROVIDER=gemini`)
 - `pytest` + `pytest-asyncio` + `httpx` (test client) — testing
 
 ### Crypto News API
 - **Selected for POC**: CryptoPanic free tier (50 req/day per token, returns news by currency filter)
 - Agent Gateway digest agent calls HTTP fetch with CryptoPanic API endpoint per watchlist project,
-  passes results to Anthropic claude-3-5-haiku for summarisation (≤ 200 tokens per project)
+  passes results to the configured LLM for summarisation (≤ 200 tokens per project)
 - Fallback: if CryptoPanic quota exceeded, the Agent Gateway uses web search (DuckDuckGo) as fallback
 
 ### Supabase Auth
@@ -968,18 +988,130 @@ Key findings to carry into implementation:
   `customer.subscription.deleted`, `invoice.payment_failed`
 - Subscription status stored on `users` table; middleware checks status on protected routes
 
+### LLM Provider Abstraction
+
+The project follows the same provider-abstraction pattern used for auth (Supabase→Casdoor), billing (Stripe→LemonSqueezy), notification (Telegram→Discord), and event bus (NATS→Kafka). All LLM interactions go through a **provider-agnostic `LLMProvider` interface** — no service directly imports a vendor SDK.
+
+**Interface** (`ai-service/src/platform/llm/interfaces.py`):
+```python
+class LLMProvider(ABC):
+    async def complete(self, *, system: str, user: str, max_tokens: int, temperature: float = 0.3,
+                       response_format: str | None = None) -> LLMResponse: ...
+    async def complete_json(self, *, system: str, user: str, max_tokens: int,
+                            json_schema: dict) -> dict: ...
+    @property
+    def model_name(self) -> str: ...
+    @property
+    def provider_name(self) -> str: ...
+```
+
+**Factory** (`ai-service/src/platform/llm/factory.py`): reads `LLM_PROVIDER` env var, dynamically imports the matching provider module, returns an `LLMProvider` instance. Providers are registered via a simple dict mapping `{"anthropic": "platform.llm.anthropic.client:AnthropicProvider", "openai": "platform.llm.openai.client:OpenAIProvider", "gemini": "platform.llm.gemini.client:GeminiProvider"}`.
+
+**Environment variables** (ai-service):
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `LLM_PROVIDER` | Provider name (anthropic, openai, gemini) | `anthropic` |
+| `LLM_MODEL` | Model identifier | `claude-3-5-haiku-latest` |
+| `LLM_API_KEY` | Provider API key | (required) |
+| `LLM_BASE_URL` | Override base URL (for local proxies, Azure OpenAI, etc.) | Provider default |
+| `LLM_MAX_RETRIES` | Max retry count for transient errors | `2` |
+| `LLM_TIMEOUT_SECONDS` | Per-request timeout | `30` |
+
+**Agent Gateway LLM config** (mapped per gateway):
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AGENT_GATEWAY_LLM_PROVIDER` | Gateway LLM provider | `anthropic` |
+| `AGENT_GATEWAY_LLM_MODEL` | Gateway LLM model | `claude-3-5-haiku-latest` |
+| `AGENT_GATEWAY_LLM_API_KEY` | Gateway LLM API key | (required) |
+
+**Design decisions:**
+- Provider SDKs (`anthropic`, `openai`, `google-genai`) are **optional dependencies** — only the configured provider's SDK needs to be installed; the factory raises a clear error if the SDK is missing
+- The `LLMProvider` interface includes both `complete()` (free-text) and `complete_json()` (structured output) methods — sentiment classification uses `complete_json()` for reliable JSON parsing
+- All LLM calls are instrumented with Langfuse `@observe` decorator for cost/latency/quality tracking regardless of provider
+- Temperature, max_tokens, and response format are passed per-call (not fixed at provider level) because different skills have different requirements (digest = creative, sentiment = deterministic)
+
+### Langfuse — LLM Observability
+
+**Selected for POC**: Langfuse (self-hosted, MIT license) — purpose-built LLM observability platform that complements the existing generic OTLP→Prometheus→Grafana telemetry stack.
+
+**Why Langfuse in addition to Prometheus/Grafana?**
+The existing Agent Gateway OTLP pipeline provides generic request/latency/error metrics. Langfuse fills LLM-specific observability gaps:
+
+| Capability | OTLP → Prometheus | Langfuse |
+|---|---|---|
+| Request latency / error rate | ✅ | ✅ |
+| Full prompt + completion logging | ❌ | ✅ |
+| Per-user / per-skill cost tracking | ❌ | ✅ (auto-calculated by model) |
+| Prompt version management + A/B eval | ❌ | ✅ |
+| Nested agent trace visualisation | ❌ | ✅ |
+| Quality scoring (manual + automated) | ❌ | ✅ |
+| LLM playground (test prompts live) | ❌ | ✅ |
+| Token usage breakdown | ❌ | ✅ |
+
+**Architecture** (self-hosted via Docker Compose):
+- `langfuse-web` — Next.js web UI + API server (dashboard at `http://localhost:3100`)
+- `langfuse-worker` — async background worker for trace processing
+- `clickhouse` — OLAP storage for traces and observations (high-volume, columnar)
+- Shared Postgres — reuses the project's existing Postgres instance (Langfuse schema in `langfuse_` prefix, separate from `app_` / `gc_` / `platform_` prefixes)
+- Redis — reuses the project's existing Redis instance (Langfuse uses a dedicated key prefix)
+- S3/MinIO — optional blob storage for large payloads (not required for POC scale)
+
+**Integration points** (dual-path architecture — all LLM calls from both services appear in the same Langfuse dashboard):
+1. **ai-service** (Python — first-class SDK path): `langfuse` Python SDK v3 with `@observe` decorator on all `LLMProvider` methods — traces every LLM call with model, tokens, cost, latency, user_id, skill_name. Full feature set: prompt versioning, playground, scoring, nested trace visualisation
+2. **Agent Gateway** (any language — OTLP path): Agent Gateway (GoClaw, OpenClaw, ZeroClaw, etc.) exports OTLP traces to Langfuse via the OTLP-compatible HTTP endpoint at `http://langfuse-web:3100/api/public/otel`. Langfuse auto-maps `gen_ai.*` semantic convention attributes (model name, token usage, cost) into its LLM-specific data model. This works for **any OTLP-capable agent framework regardless of language** (Go, Rust, TypeScript, Python). Two sub-options:
+   - **Direct export**: configure the gateway's OTLP exporter to point at Langfuse's `/api/public/otel` endpoint (simplest; requires gateway to support OTLP over HTTP)
+   - **OTel Collector fan-out**: gateway exports OTLP to an OpenTelemetry Collector, which fans out to both Prometheus (generic metrics) and Langfuse (LLM traces) — recommended when you also want Prometheus metrics from the same spans
+3. **Quality scoring**: manual scoring via Langfuse UI during POC; automated scoring (e.g., checking sentiment JSON schema validity) as a post-POC enhancement
+
+**OTLP → Langfuse attribute mapping** (Agent Gateway must set these span attributes for full Langfuse feature support):
+| OTel Attribute | Langfuse Field | Required? |
+|---|---|---|
+| `gen_ai.request.model` | Generation model name | ✅ Yes |
+| `gen_ai.usage.input_tokens` | Input token count | ✅ Yes |
+| `gen_ai.usage.output_tokens` | Output token count | ✅ Yes |
+| `gen_ai.usage.cost` | Cost in USD | Optional (Langfuse auto-calculates from model) |
+| `gen_ai.prompt` | Prompt / input text | Recommended |
+| `gen_ai.completion` | Completion / output text | Recommended |
+| `gen_ai.system` | Provider name (e.g., `anthropic`) | Recommended |
+| `langfuse.user.id` | Per-user attribution | Recommended |
+| `langfuse.session.id` | Session grouping | Optional |
+| `langfuse.trace.metadata.skill_name` | Skill name (digest, sentiment) | Recommended |
+
+**Langfuse OTLP limitations** (vs. Python/JS SDK):
+- Prompt management / playground: available via SDK only; OTLP path provides observability but not prompt CRUD
+- Quality scoring: OTLP traces can be scored post-hoc via Langfuse REST API; SDK provides inline scoring helpers
+- Supports OTLP over HTTP only (`HTTP/JSON` and `HTTP/protobuf`); gRPC not yet supported
+
+**Environment variables** (ai-service + docker-compose):
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `LANGFUSE_PUBLIC_KEY` | Langfuse project public key | (required) |
+| `LANGFUSE_SECRET_KEY` | Langfuse project secret key | (required) |
+| `LANGFUSE_HOST` | Langfuse server URL | `http://langfuse-web:3100` |
+| `LANGFUSE_ENABLED` | Enable/disable tracing (disable for tests) | `true` |
+
+**Agent Gateway → Langfuse OTLP config** (added to each gateway `.env` file):
+| Variable | Purpose | Default |
+|----------|---------|--------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Langfuse OTLP endpoint (or OTel Collector) | `http://langfuse-web:3100/api/public/otel` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Basic Auth header (`Authorization=Basic <base64(pk:sk)>`) | (required) |
+
+For OTel Collector fan-out, the gateway exports to the collector at `http://otel-collector:4318` and the collector config includes both `otlphttp/langfuse` and `prometheusremotewrite` exporters.
+
+**Cost tracking**: Langfuse automatically calculates cost per trace based on model pricing tables (built-in for Anthropic, OpenAI, Gemini, Mistral). Per-user cost attribution is achieved by passing `user_id` to `langfuse.trace()` (Python SDK) or setting `langfuse.user.id` span attribute (OTLP path). Dashboard shows: total cost by model, cost per skill (digest, anomaly, sentiment), cost per user, cost trend over time — unified across both ai-service (Python SDK) and Agent Gateway (OTLP) traces.
+
 ### Anomaly Explanation
-- **LLM model**: claude-3-5-haiku via direct Anthropic API call from ai-service (not via Agent Gateway — latency-sensitive path must avoid the gateway's scheduling overhead)
+- **LLM model**: Configurable via `LLM_PROVIDER` + `LLM_MODEL` env vars (POC default: Anthropic claude-3-5-haiku); ai-service calls LLM via the `LLMProvider` interface, not directly via Anthropic SDK — latency-sensitive path calls ai-service directly (avoids Agent Gateway scheduling overhead)
 - **Token budget**: ≤ 150 output tokens; input = signal metadata (~50 tokens) + up to 5 news headlines (~200 tokens) + 24 h OHLCV summary (~50 tokens) = ~300 input tokens → total ~450 tokens per explanation
-- **Cost estimate**: ~450 tokens × $0.25/MTok (haiku input) + 150 × $1.25/MTok (haiku output) ≈ $0.0003/explanation; at 100 alerts/day = ~$0.03/day
+- **Cost estimate** (POC default model: claude-3-5-haiku): ~450 tokens × $0.25/MTok (haiku input) + 150 × $1.25/MTok (haiku output) ≈ $0.0003/explanation; at 100 alerts/day = ~$0.03/day. Costs vary by LLM provider; tracked via Langfuse per-model cost dashboards
 - **Latency budget**: 10 s hard timeout; typical haiku response in 1–3 s; news fetch cached from recent digest/sentiment runs reduces cold-start
 - **Fallback strategy**: timeout → deliver alert without explanation; news fetch failure → use market-context-only prompt; LLM error → deliver alert without explanation; all failures logged + metriced
-- **ai-service endpoint**: `POST /explain/{asset}` — new endpoint in `ai-service/src/enrichment/explanation.py`; accepts `{ signal_type, threshold, current_value, news_items[], price_stats }`, calls Anthropic API, returns `{ explanation: string }`; cached at `explanation:{asset}:{signal_rule_id}:{minute}` with TTL = 55 s (prevents duplicate LLM calls if the same rule fires on consecutive ticks within cooldown edge cases)
+- **ai-service endpoint**: `POST /explain/{asset}` — new endpoint in `ai-service/src/enrichment/explanation.py`; accepts `{ signal_type, threshold, current_value, news_items[], price_stats }`, calls LLM via `LLMProvider` interface, returns `{ explanation: string }`; cached at `explanation:{asset}:{signal_rule_id}:{minute}` with TTL = 55 s (prevents duplicate LLM calls if the same rule fires on consecutive ticks within cooldown edge cases)
 
 ### Market Sentiment Pulse
-- **LLM model**: claude-3-5-haiku via Agent Gateway LLM provider (same as digest — not latency-sensitive, so gateway scheduling overhead is acceptable)
+- **LLM model**: Configurable via Agent Gateway LLM provider config (POC default: Anthropic claude-3-5-haiku); same provider abstraction as digest — not latency-sensitive, so gateway scheduling overhead is acceptable
 - **Token budget**: ≤ 100 output tokens; input = up to 10 news headlines (~400 tokens) + structured prompt (~100 tokens) = ~500 input tokens → total ~600 tokens per pulse per user
-- **Cost estimate**: ~600 tokens × $0.25/MTok (haiku input) + 100 × $1.25/MTok (haiku output) ≈ $0.0003/pulse/user; at 50 users × 6 pulses/day = ~$0.09/day
+- **Cost estimate** (POC default model: claude-3-5-haiku): ~600 tokens × $0.25/MTok (haiku input) + 100 × $1.25/MTok (haiku output) ≈ $0.0003/pulse/user; at 50 users × 6 pulses/day = ~$0.09/day. Costs vary by LLM provider; tracked via Langfuse per-model cost dashboards
 - **CryptoPanic quota impact**: sentiment pulse reuses the same news adapter as digest; at 6 pulses/day × 50 users × ~2 projects avg = 600 CryptoPanic calls/day — exceeds 50 req/day free tier; **mitigation**: (a) cache news responses at ai-service level with 30 min TTL (sentiment pulse doesn't need real-time freshness); (b) share cached news across users with overlapping watchlists; (c) DuckDuckGo fallback on quota exhaustion (existing adapter); (d) consider a single "global" sentiment pulse that evaluates market-wide sentiment once and stores it for all users, rather than per-user evaluation — reduces LLM + news API calls from O(users) to O(1)
 - **Structured output**: LLM prompt requests JSON `{ "score": "bullish|neutral|bearish", "confidence": 0.0-1.0, "summary": "..." }`; Agent Gateway skill parses the response and rejects malformed output (retries once); if both attempts fail, score is recorded as `neutral` with confidence `0.0`
 - **Sentiment trend**: over time, stored sentiment scores enable a trend line visible on the dashboard (post-POC UI enhancement); the API `GET /sentiment?limit=N` returns the most recent scores for chart rendering

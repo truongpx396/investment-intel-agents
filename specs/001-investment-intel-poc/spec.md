@@ -428,7 +428,7 @@ strategy — without any notification or digest feature needing to be present.
   explanation (1–2 sentences) describing the likely cause of the signal condition. The explanation
   step MUST fetch recent news items (via the existing CryptoPanic / DuckDuckGo news adapter) and
   surrounding market context (24 h price movement from the existing `price_stats` endpoint) for
-  the triggering asset, pass them to the LLM (claude-3-5-haiku via Agent Gateway or direct API),
+  the triggering asset, pass them to the configured LLM provider (via Agent Gateway or direct ai-service API),
   and append the resulting explanation to the alert's Telegram notification message.
 - **FR-030**: The anomaly explanation MUST be **non-blocking** — if the LLM call fails (timeout,
   rate limit, or error), the alert MUST still be delivered with the standard fields (asset, signal
@@ -451,7 +451,7 @@ strategy — without any notification or digest feature needing to be present.
   environment variable (`SENTIMENT_PULSE_CRON`, default: `0 */4 * * *`).
 - **FR-035**: Each sentiment pulse MUST fetch the top N (configurable, default: 10) most recent
   news items across all watchlisted projects for each user, classify overall sentiment via the
-  LLM (claude-3-5-haiku) as one of: **bullish**, **neutral**, or **bearish**, and store the
+  LLM as one of: **bullish**, **neutral**, or **bearish**, and store the
   resulting score with a timestamp.
 - **FR-036**: Sentiment scores MUST be persisted in a new `app_sentiment_scores` table with
   fields: `id`, `user_id`, `score` (enum: bullish/neutral/bearish), `confidence` (0.0–1.0),
@@ -550,6 +550,30 @@ strategy — without any notification or digest feature needing to be present.
   evaluations within 3 minutes of the scheduled cron trigger. Measurement uses the same OTLP
   traces and Prometheus metrics as the digest agent (NFR-PERF-004).
 
+### Observability
+
+- **NFR-OBS-001**: All LLM calls MUST be traced via Langfuse using a dual-path architecture:
+  (a) **ai-service** traces LLM calls via the Langfuse Python SDK (`@observe` decorator) with
+  attributes: model name, provider name, input/output tokens, latency, cost (auto-calculated),
+  user_id (when available), and skill name (digest, anomaly, sentiment);
+  (b) **Agent Gateway** exports LLM call traces to Langfuse via the OTLP HTTP endpoint
+  (`/api/public/otel`) with `gen_ai.*` semantic convention attributes (model, tokens, cost).
+  Both paths feed the same Langfuse project. Traces from both sources MUST be viewable in the
+  Langfuse dashboard at `http://localhost:3100`.
+- **NFR-OBS-002**: The LLM provider abstraction MUST support swapping providers (Anthropic →
+  OpenAI → Gemini) via environment variable changes (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`)
+  without any application code changes. Provider SDKs are optional dependencies — only the
+  configured provider's SDK needs to be installed.
+- **NFR-OBS-003**: Langfuse integration MUST be opt-in via `LANGFUSE_ENABLED` env var (default
+  `true` in docker-compose, `false` in test environments). When disabled, all `@observe`
+  decorators MUST be no-ops with zero performance overhead.
+- **NFR-OBS-004**: Agent Gateway OTLP traces exported to Langfuse MUST include `gen_ai.request.model`,
+  `gen_ai.usage.input_tokens`, and `gen_ai.usage.output_tokens` span attributes so that Langfuse
+  can auto-calculate cost and display token usage. The `langfuse.user.id` and
+  `langfuse.trace.metadata.skill_name` attributes SHOULD be set for per-user cost attribution
+  and per-skill filtering. OTLP export uses HTTP only (`HTTP/JSON` or `HTTP/protobuf`);
+  gRPC is not supported by Langfuse.
+
 ### Reliability
 
 - **NFR-REL-001**: The signal evaluation loop MUST be self-recovering; a panic or unhandled error
@@ -610,9 +634,8 @@ strategy — without any notification or digest feature needing to be present.
   news API (distinct from the market data feed in A-001); the provider selected for POC is
   CryptoPanic (free tier, 50 req/day per token) with DuckDuckGo as a fallback on quota
   exhaustion. Provider selection is confirmed in `plan.md` Research Notes.
-- **A-007**: An LLM API is available for digest summarisation; the provider confirmed at
-  planning is **Anthropic claude-3-5-haiku** via Agent Gateway provider config. LLM call costs are
-  acceptable within POC budget constraints.
+- **A-007**: An LLM API is available for digest summarisation, anomaly explanation, and sentiment classification; the LLM provider is **configurable** via `LLM_PROVIDER` + `LLM_MODEL` environment variables. POC default: **Anthropic claude-3-5-haiku** via Agent Gateway provider config and ai-service `LLMProvider` interface. Swappable to OpenAI, Google Gemini, Mistral, or any OpenAI-compatible API without application code changes. LLM call costs are
+  acceptable within POC budget constraints. All LLM calls are traced via Langfuse for cost/latency observability.
 - **A-008**: Alert records, digest records, and raw news items are retained indefinitely during
   the POC evaluation period; no automated purge or archival policy is implemented at this stage.
   Data retention policy will be revisited and formalised post-POC.
@@ -640,6 +663,6 @@ strategy — without any notification or digest feature needing to be present.
 | **Strategy Definition Format (SDF)** | A portable JSON structure (with JSON Schema) that fully represents a strategy and its signal rules. Used as the wire format for `POST /strategies` and `GET /strategies/:id`, and the target format for future LLM-generated strategies ("text → SDF → save"). |
 | **Seed Configuration** | A declarative YAML file (`config/seed.yaml`) that externalises all business-level configuration: signal type definitions with parameter schemas, POC project seed data, and system tunables. Validated against `config/seed.schema.json` at boot. |
 | **Strategy Import** | Bulk creation of strategies via `POST /strategies/import` accepting an array of SDF documents; validates each against the JSON Schema and the same business rules as single creation. |
-| **Anomaly Explanation** | A short LLM-generated text (1–2 sentences) appended to an alert notification that describes the likely market event or news driving the signal condition. Produced at signal-fire time by fetching recent news + market context and passing them to claude-3-5-haiku. Persisted on the Alert record for display in alert history. |
+| **Anomaly Explanation** | A short LLM-generated text (1–2 sentences) appended to an alert notification that describes the likely market event or news driving the signal condition. Produced at signal-fire time by fetching recent news + market context and passing them to the configured LLM provider (POC default: Anthropic claude-3-5-haiku). Persisted on the Alert record for display in alert history. |
 | **Sentiment Score** | A periodic classification of overall market sentiment (bullish / neutral / bearish) for a user's watchlisted assets, generated by the Agent Gateway sentiment-pulse skill. Carries a confidence value (0.0–1.0), a short rationale, and the count of news items analysed. Stored in `app_sentiment_scores`. |
 | **Sentiment Pulse** | A scheduled Agent Gateway skill that runs at a configurable interval (default: every 4 hours), fetches recent news, classifies market sentiment via the LLM, stores the score, and optionally pushes a short Telegram summary to the user. |

@@ -36,11 +36,11 @@ Any agent gateway used with this project **MUST** support the following capabili
 |-----------|-------------|----------|
 | **Cron scheduling** | Schedule agent tasks at fixed times (e.g. `08:30 UTC daily`) | Daily digest trigger |
 | **HTTP / web_fetch** | Make outbound HTTPS requests to external APIs | Calling Go backend (`/internal/`) and Python ai-service (`/news/`, `/enrich/`, `/projects/`) |
-| **LLM provider** | Connect to an LLM (Anthropic Claude 3.5 Haiku or equivalent) | Digest summarisation |
+| **LLM provider** | Connect to an LLM (configurable; POC default: Anthropic Claude 3.5 Haiku) | Digest summarisation |
 | **Telegram channel** | Send messages to a Telegram chat/group | Digest delivery |
 | **Subagent / parallel** | Run multiple tasks in parallel and wait for all results | Parallel news fetch per project |
 | **Scoped permissions** | Restrict each agent/skill to specific tools and endpoints | Per-agent grants, principle of least privilege |
-| **Observability** | Export traces/metrics via OTLP or equivalent | Performance monitoring, SLA tracking |
+| **Observability** | Export traces/metrics via OTLP or equivalent | Performance monitoring, SLA tracking; OTLP traces also exported to Langfuse (`/api/public/otel`) for LLM-specific observability (prompt/completion logging, token usage, cost tracking) |
 | **Web dashboard** | Embedded admin UI for health and configuration | Operational visibility |
 
 ### 3.2 Communication Contract
@@ -119,11 +119,15 @@ Common environment variables that all gateway implementations require (variable 
 | Variable | Purpose | Example |
 |----------|---------|---------|
 | `AGENT_GATEWAY_INTERNAL_TOKEN` | Bearer token for Go backend `/internal/` calls | `changeme-static-token` |
-| `AGENT_GATEWAY_LLM_API_KEY` | API key for the LLM provider (e.g. Anthropic) | `sk-ant-...` |
+| `AGENT_GATEWAY_LLM_PROVIDER` | LLM provider name (anthropic, openai, gemini) | `anthropic` |
+| `AGENT_GATEWAY_LLM_MODEL` | LLM model identifier | `claude-3-5-haiku-latest` |
+| `AGENT_GATEWAY_LLM_API_KEY` | API key for the LLM provider (Anthropic, OpenAI, Gemini, etc.) | `sk-ant-...` |
 | `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN` | Telegram bot token for digest delivery | `123456:ABC-DEF...` |
 | `AGENT_GATEWAY_TELEGRAM_CHAT_ID` | Target Telegram chat/group ID | `-1001234567890` |
 | `AGENT_GATEWAY_BACKEND_URL` | Go backend base URL | `http://backend:8080` |
 | `AGENT_GATEWAY_AI_SERVICE_URL` | Python ai-service base URL | `http://ai-service:8000` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for Langfuse LLM observability | `http://langfuse-web:3100/api/public/otel` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | OTLP auth header (Basic Auth: `base64(langfuse_pk:langfuse_sk)`) | (required when Langfuse enabled) |
 
 Each gateway adapter directory (e.g. `goclaw/.env.goclaw`) maps these generic variables to the gateway-specific variable names.
 
@@ -157,6 +161,7 @@ After switching gateways, verify:
 - [ ] Test digest fires correctly (`/internal/digest` called)
 - [ ] Telegram message delivered
 - [ ] OTLP traces visible in collector
+- [ ] LLM call traces visible in Langfuse dashboard (if Langfuse enabled)
 - [ ] Digest completes within 5 minutes
 
 ---
@@ -171,10 +176,10 @@ After switching gateways, verify:
 | **Cron** | ✅ Native | ✅ Native | ✅ Native | ✅ Native | ✅ Native |
 | **web_fetch / HTTP** | ✅ `web_fetch` | ✅ Tools | ✅ `web_fetch` | ✅ `web_fetch` | ✅ Tools |
 | **Telegram** | ✅ Channel | ✅ Channel | ✅ Channel | ✅ Channel | ✅ Channel |
-| **LLM Anthropic** | ✅ Provider | ✅ Provider | ✅ Provider | ✅ Provider | ✅ Provider |
+| **LLM provider** | ✅ Provider | ✅ Provider | ✅ Provider | ✅ Provider | ✅ Provider |
 | **Subagent / parallel** | ✅ `waitAll` | ✅ Sessions | ✅ Spawn | ✅ Subagent | ✅ Hands |
 | **Scoped permissions** | ✅ Per-agent grants | ✅ Multi-agent routing | ✅ Config-based | ✅ Config-based | ✅ Autonomy levels |
-| **OTLP / observability** | ✅ Native | ✅ Native | ✅ Log-based | ✅ Log-based | ✅ Native |
+| **OTLP / observability** | ✅ Native (→ Langfuse OTLP) | ✅ Native (→ Langfuse OTLP) | ✅ Log-based | ✅ Log-based | ✅ Native (→ Langfuse OTLP) |
 | **Web dashboard** | ✅ Embedded | ✅ Embedded | ✅ WebUI | ✅ API-based | ✅ React dashboard |
 | **MCP support** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **License** | Proprietary | MIT | MIT | MIT | MIT / Apache-2.0 |
