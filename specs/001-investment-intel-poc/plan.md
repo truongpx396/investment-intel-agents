@@ -17,6 +17,25 @@ The AI agent layer (Agent Gateway) orchestrates the digest pipeline: a scheduled
 the news API, invokes the LLM summarisation tool, and dispatches the Telegram digest — replacing
 bespoke Python orchestration with the Agent Gateway's built-in cron, HTTP fetch, and message tools.
 
+### Domain-Decoupled Platform Architecture
+
+> **Architecture Decision:** [architecture-domain-decoupling.md](./architecture-domain-decoupling.md)
+
+The codebase is structured as a **domain-decoupled platform** where cross-cutting capabilities
+(authentication, billing, notification, event bus, AI agent orchestration) are isolated from
+investment-specific business logic. This enables reuse of the platform layer for entirely
+different domains (e.g., e-commerce price monitoring, healthcare alerts) without modifying
+auth, billing, or agent code.
+
+**Key structural rules:**
+- **`platform/`** packages are domain-agnostic: auth, billing, notification, event bus, health, user profile, admin. They define interfaces; they never import domain code.
+- **`domain/investment/`** packages contain all investment-specific logic: strategies, signals, alerts, watchlist, market data adapters. They implement platform interfaces and register themselves at startup.
+- **Agent Gateway** skills are split into reusable platform utilities and domain-specific agent definitions (digest persona, crypto-digest skill).
+- **Python ai-service** separates a generic compute/enrichment/content platform from investment-specific indicator implementations and news adapters.
+- **React frontend** separates platform pages (auth, billing, settings, admin) from domain pages (dashboard, strategies, alerts, watchlist).
+- Platform tables use `platform_` namespace; domain tables use `app_` namespace; Agent Gateway uses `gc_` namespace.
+- Swapping the domain requires writing a new `domain/` module and agent skills — zero changes to platform code.
+
 ---
 
 ## Technical Context
@@ -41,7 +60,7 @@ bespoke Python orchestration with the Agent Gateway's built-in cron, HTTP fetch,
 - **Market data feed**: CoinGecko Free API (no key required, ≤30 req/min) for spot price and
   percentage-change signals; CryptoCompare `histominute` endpoint (free tier, 100k req/month)
   for intraday OHLCV data forwarded to Python ai-service for indicator computation. Go adapter
-  abstracted behind `pkg/marketdata.Provider`; RSI and OHLCV math happens in Python. All price
+  abstracted behind `domain/investment/marketdata.Provider`; RSI and OHLCV math happens in Python. All price
   data is denominated in the asset's `quote_currency` from `app_projects` (default `USD`); the
   adapter passes this value as CoinGecko `vs_currencies` and CryptoCompare `tsym` parameters.
 - **Circuit breaker**: `sony/gobreaker` v2 — protects Go evaluator's HTTP calls to ai-service;
@@ -134,31 +153,45 @@ bespoke Python orchestration with the Agent Gateway's built-in cron, HTTP fetch,
 
 A single authoritative reference for which service owns each concern. When in doubt, consult this table before placing code.
 
+### Platform vs. Domain Ownership
+
+> **Governing principle:** Platform code (`platform/`) never imports domain code (`domain/`). Domain code depends on platform interfaces only. See [architecture-domain-decoupling.md](./architecture-domain-decoupling.md).
+
 ### Ownership by Concern
 
-| Concern | Owner | Rationale |
-|---|---|---|
-| REST API (auth, strategies, alerts, watchlist, billing, admin) | **Go backend** | Strongly-typed, high-throughput HTTP; all user-facing CRUD and business logic |
-| JWT validation & user-context injection | **Go backend** | Supabase public-key verification at the edge of the Go service; no other service touches auth tokens |
-| Signal evaluation loop (30 s ticker, price threshold, % change, RSI trigger check) | **Go backend** | Orchestrates the tick; fetches pre-computed indicator values from ai-service; evaluates threshold rules; publishes to NATS — latency-sensitive hot path |
-| Market data fetching (CoinGecko spot price, CryptoCompare OHLCV) | **Go backend** (`pkg/marketdata/`) | Raw data fetch stays in Go; OHLCV slices are forwarded to ai-service for indicator computation |
-| **Technical indicator computation (RSI, volume SMA, MACD, Bollinger Bands, OHLCV stats, intraday % change)** | **Python ai-service** | `pandas-ta` / `numpy` vectorised math; zero-effort 14-period RSI, 20-period volume SMA ratio, MACD(12,26,9), Bollinger Bands(20,2) vs hand-rolled Go; accepts `candle_minutes` parameter to resample 1-min candles into the user-selected candle size (5/15/60 min) before computing indicators; result cached in Redis at 25 s TTL keyed by `{asset}:{candle_minutes}`; Go evaluator calls `POST /indicators/{asset}` (indicators) and `POST /pct_change/{asset}` (intraday % change — separate cache key by `window_minutes`) per tick |
-| **News fetching & `NewsProvider` interface** | **Python ai-service** | CryptoPanic + DuckDuckGo fallback; async `httpx`; quota tracking; `GET /news/{slug}` |
-| **News sentiment scoring & deduplication** | **Python ai-service** | `vaderSentiment` for headline sentiment; deduplication before Agent Gateway summarisation; `POST /enrich/news` |
-| **Curated project registry** | **Python ai-service** | **DB-backed**: reads from `app_projects` table (ai-service connects to shared Postgres in read-only mode); cached in-memory with 5 min TTL; `GET /projects` returns `{slug, display_name, symbol, coingecko_id, quote_currency, is_signal_asset}`; single source of truth for both React watchlist/strategy form and Agent Gateway skill; `quote_currency` (default `USD`) is consumed by Go market data adapters; adding a new project is a data-only change (visible within 5 min, no code deploy) |
-| NATS publish/subscribe (signal events, alert queue, DLQ) | **Go backend** | All real-time event flow is Go-owned; the Agent Gateway and ai-service do NOT touch NATS |
-| Alert persistence & Telegram delivery (real-time) | **Go backend** | Direct Telegram Bot API call for < 60 s latency; the Agent Gateway's scheduler is too coarse for real-time |
-| Telegram account linking (deep-link, webhook, bot token) | **Go backend** | Stateful linking flow requires Postgres writes; linked to auth middleware |
-| Stripe checkout, webhook processing, subscription gating | **Go backend** | Financial operations require transaction safety and webhook signature validation |
-| PostgreSQL migrations | **Go backend** (`migrations/`, `golang-migrate`) | Single migration runner owns schema; Agent Gateway uses `gc_` prefix namespace only |
-| Daily digest orchestration (cron, fetch, summarise, send) | **Agent Gateway** | Built-in cron, HTTP fetch, LLM provider, and message tools; calls ai-service `GET /news/{slug}` and `POST /enrich/news` |
-| LLM summarisation (claude-3-5-haiku) | **Agent Gateway** | LLM provider configured natively in the gateway; enriched + deduplicated news items from ai-service are the input |
-| Telegram digest delivery | **Agent Gateway** | Agent Gateway Telegram channel; same bot as Go alert dispatcher (single bot, see §Single Telegram Bot below) |
-| Per-user agent context & watchlist retrieval | **Agent Gateway → Go `/internal/` API** | Agent Gateway skill calls Go's `/internal/watchlist` using service token (T057a) |
-| UI (all configuration, history, settings, billing pages) | **React SPA** | Single-page app via Cloudflare CDN; all data via TanStack Query → Go REST API |
-| Design system primitives & component stories | **React SPA** (Storybook) | Co-located `*.stories.tsx`; visual baseline and living docs |
-| Routing, TLS termination, rate limiting | **Traefik** | Handles `api.`, `app.`, `agent.` subdomains; services never terminate TLS directly |
-| Metrics exposure & tracing | **Go backend** + **Agent Gateway** (OTLP) + **ai-service** (`/metrics`) | All three expose Prometheus metrics; Agent Gateway emits OTLP traces |
+| Concern | Owner | Layer | Rationale |
+|---|---|---|---|
+| REST API server, router, graceful shutdown | **Go backend** | **Platform** | Generic HTTP server lifecycle; domain modules register their routes at startup |
+| JWT validation & user-context injection | **Go backend** | **Platform** | Supabase public-key verification at the edge; domain-agnostic — any domain uses same auth |
+| Stripe checkout, webhook processing, subscription gating | **Go backend** | **Platform** | Billing is domain-agnostic; gate middleware checks subscription status without knowing what features are gated |
+| Generic notification dispatch (route to Telegram/email/push) | **Go backend** | **Platform** | Domain formats the `NotificationPayload`; platform delivers it via the correct channel |
+| Telegram Bot API client + account linking | **Go backend** | **Platform** | Telegram is a notification channel, not domain logic; linking is user-level |
+| Generic event pub/sub (NATS JetStream abstracted) | **Go backend** | **Platform** | Domain publishes/consumes events through platform `EventPublisher`/`EventConsumer` interfaces; NATS is an implementation detail |
+| User profile (timezone, settings) | **Go backend** | **Platform** | Domain-agnostic user preferences |
+| Admin middleware + user management | **Go backend** | **Platform** | Generic admin operations |
+| Health endpoints (`/health`, `/ready`) | **Go backend** | **Platform** | Infrastructure concern |
+| PostgreSQL migrations | **Go backend** (`migrations/`) | **Both** | Platform migrations (`001-099`, `platform_*` tables); domain migrations (`100-199`, `app_*` tables); Agent Gateway uses `gc_` prefix |
+| Signal evaluation loop (30 s ticker, threshold checks) | **Go backend** | **Domain** | Investment-specific: orchestrates tick, fetches pre-computed indicators, evaluates rules, publishes domain events via platform `EventPublisher` |
+| Market data fetching (CoinGecko, CryptoCompare) | **Go backend** | **Domain** | Investment-specific data sources; domain-owned `DataFeedProvider` implementations |
+| Strategy CRUD, signal rule validation, SDF | **Go backend** | **Domain** | Investment business logic; registered as domain routes via `DomainModule.RegisterRoutes()` |
+| Alert persistence, history, dispatch formatting | **Go backend** | **Domain** | Investment alert records; formats `NotificationPayload` for platform dispatcher — domain creates the message, platform delivers it |
+| Watchlist CRUD, digest content provision | **Go backend** | **Domain** | Investment watchlist; provides content for digest via `/internal/` API |
+| Seed config loader (signal types, projects) | **Go backend** | **Domain** | Investment-specific configuration loaded at startup from `config/domain/investment/seed.yaml` |
+| **Generic computation engine (cache, resample)** | **Python ai-service** | **Platform** | Reusable compute infrastructure; domain registers `ComputeHandler` implementations |
+| **Generic content enrichment (sentiment, dedup)** | **Python ai-service** | **Platform** | VADER sentiment works for any text content; deduplication is generic |
+| **Generic content provider interface** | **Python ai-service** | **Platform** | `ContentProvider` ABC; domain implements concrete adapters |
+| **Technical indicator computation (RSI, MACD, Bollinger, etc.)** | **Python ai-service** | **Domain** | `pandas-ta` / `numpy`; registered as compute handlers; accepts `candle_minutes` parameter to resample 1-min candles; cached at 25 s TTL |
+| **News fetching (CryptoPanic, DuckDuckGo)** | **Python ai-service** | **Domain** | Concrete `ContentProvider` implementations; async `httpx`; quota tracking |
+| **News enrichment routing** | **Python ai-service** | **Domain** | `POST /enrich/news` endpoint wires platform enrichment pipeline with domain-specific config |
+| **Curated project registry** | **Python ai-service** | **Domain** | DB-backed; reads from `app_projects`; cached 5 min; `GET /projects` returns `{slug, display_name, symbol, coingecko_id, quote_currency, is_signal_asset}` |
+| Agent Gateway framework (cron, LLM, Telegram, HTTP fetch) | **Agent Gateway** | **Platform** | Domain-agnostic orchestration capabilities; swappable via [agent-gateway-abstraction.md](./agent-gateway-abstraction.md) |
+| Daily digest agent persona + crypto-digest skill | **Agent Gateway** | **Domain** | Investment-specific skill files in `agents/digest-agent/`; calls ai-service `GET /news/{slug}`, `POST /enrich/news`; uses LLM for summarisation |
+| Telegram digest delivery | **Agent Gateway** | **Platform** | Agent Gateway Telegram channel; same bot as Go alert dispatcher (single bot, see §Single Telegram Bot) |
+| UI component primitives (Button, Card, Input, etc.) | **React SPA** | **Platform** | Reusable design system with Storybook stories |
+| Auth, billing, settings, admin pages | **React SPA** | **Platform** | Domain-agnostic user-facing pages |
+| Dashboard, strategy, alert, watchlist pages | **React SPA** | **Domain** | Investment-specific UI |
+| Routing, TLS termination, rate limiting | **Traefik** | **Platform** | Infrastructure concern |
+| Metrics exposure & tracing | **All services** | **Platform** | Go `/metrics`, Agent Gateway OTLP, ai-service `/metrics` |
 
 ### Cross-Service Communication Rules
 
@@ -199,14 +232,18 @@ All Go backend REST API error responses MUST use a consistent JSON envelope. The
 
 Python ai-service internal endpoints use the same envelope for consistency, though they are not user-facing.
 
-### What Each Service MUST NOT Do
+### What Each Service / Layer MUST NOT Do
 
-| Service | Must NOT |
+| Service / Layer | Must NOT |
 |---|---|
-| **Go backend** | Call LLM APIs directly; run digest orchestration; compute technical indicators (delegate to ai-service); write to `gc_` schema tables |
-| **Python ai-service** | Evaluate signal threshold rules (that logic stays in Go); touch NATS; send Telegram messages; own any user-facing Postgres tables |
-| **Agent Gateway** | Connect to NATS; perform real-time alert dispatch; own Postgres migrations; compute indicators directly |
-| **React SPA** | Call market data or news APIs directly; store secrets; implement business logic |
+| **Go backend — Platform** | Import any `domain/` package; call LLM APIs directly; know about strategies, signals, or market data; compute technical indicators |
+| **Go backend — Domain** | Import NATS directly (use `platform/eventbus` interface); send Telegram directly (use `platform/notification` interface); implement auth or billing logic |
+| **Python ai-service — Platform** | Know about crypto indicators, news providers, or project registries; contain investment-specific logic |
+| **Python ai-service — Domain** | Evaluate signal threshold rules (Go domain logic); touch NATS; send Telegram messages; own user-facing Postgres tables |
+| **Agent Gateway — Framework** | Contain domain business logic; connect to NATS; perform real-time alert dispatch; own Postgres migrations |
+| **Agent Gateway — Domain Skills** | Bypass the framework's tool system; directly access databases; implement auth or billing |
+| **React SPA — Platform** | Import domain components or pages; contain investment-specific business logic |
+| **React SPA — Domain** | Implement auth flows (use platform hooks); call market data or news APIs directly; store secrets |
 | **Traefik** | Contain application logic; be aware of NATS or Agent Gateway internals |
 
 ---
@@ -268,78 +305,166 @@ specs/001-investment-intel-poc/
 investment-intel/
 │
 ├── backend/                         # Go API service
-│   ├── cmd/server/main.go
-│   ├── internal/
+│   ├── cmd/server/main.go          # Wires platform + domain; starts server
+│   │
+│   ├── platform/                    # DOMAIN-AGNOSTIC (reusable across projects)
 │   │   ├── auth/                    # JWT validation, Supabase integration
-│   │   ├── strategies/              # Strategy CRUD, signal rule validation
-│   │   ├── signals/                 # Signal evaluator (30 s polling loop)
-│   │   ├── alerts/                  # Alert persistence, history queries
-│   │   ├── watchlist/               # Watchlist CRUD
-│   │   ├── telegram/                # Telegram account linking
-│   │   └── billing/                 # Stripe subscription + webhook handler
-│   ├── pkg/
-│   │   ├── marketdata/              # Market data feed adapter (interface + impl)
-│   │   └── nats/                    # NATS publisher/subscriber helpers
+│   │   │   ├── middleware.go        # Auth middleware (extracts user from JWT)
+│   │   │   ├── supabase.go         # Supabase client
+│   │   │   └── handler.go          # /auth/* routes (register, login, logout, etc.)
+│   │   ├── billing/                 # Stripe subscription + webhook handler
+│   │   │   ├── checkout.go
+│   │   │   ├── webhook.go
+│   │   │   ├── gate.go             # Subscription gate middleware
+│   │   │   └── interfaces.go       # SubscriptionChecker, BillingEventHandler
+│   │   ├── notification/            # Generic notification dispatch
+│   │   │   ├── interfaces.go       # NotificationPayload, Sender, Dispatcher
+│   │   │   ├── telegram/           # Telegram-specific channel
+│   │   │   │   ├── bot.go          # Telegram Bot API client
+│   │   │   │   ├── link_service.go  # Account linking (deep-link, webhook, confirm)
+│   │   │   │   └── handler.go      # /telegram/* routes
+│   │   │   └── dispatcher.go       # Route payload → correct channel
+│   │   ├── eventbus/                # Generic event pub/sub (NATS JetStream abstracted)
+│   │   │   ├── interfaces.go       # EventPublisher, EventConsumer, EventHandler
+│   │   │   ├── nats.go             # NATS JetStream implementation
+│   │   │   └── stream.go           # Stream/consumer config helpers
+│   │   ├── health/                  # /health, /ready endpoints
+│   │   ├── user/                    # User profile (timezone, settings — domain-agnostic)
+│   │   ├── admin/                   # Admin middleware + generic user management
+│   │   ├── server/                  # HTTP server setup, graceful shutdown, router mounting
+│   │   │   ├── server.go           # Server struct with DomainModule registration
+│   │   │   └── router.go           # Platform route registration
+│   │   └── config/                  # Platform config (env vars, non-domain settings)
+│   │
+│   ├── domain/                      # DOMAIN-SPECIFIC (swappable)
+│   │   └── investment/              # Investment intelligence domain module
+│   │       ├── register.go          # Register(platform) — mounts routes, consumers, workers
+│   │       ├── strategies/          # Strategy CRUD, signal rule validation, SDF
+│   │       │   ├── service.go
+│   │       │   ├── handler.go
+│   │       │   ├── validator.go
+│   │       │   └── import_handler.go
+│   │       ├── signals/             # Signal evaluator (30 s polling loop)
+│   │       │   ├── evaluator.go
+│   │       │   ├── poller.go
+│   │       │   └── cooldown.go
+│   │       ├── alerts/              # Alert persistence, history queries, dispatch formatting
+│   │       │   ├── handler.go
+│   │       │   ├── dispatcher.go    # NATS consumer → format NotificationPayload → platform
+│   │       │   └── redriver.go
+│   │       ├── watchlist/           # Watchlist CRUD, digest content provision
+│   │       │   └── handler.go
+│   │       ├── marketdata/          # Market data feed adapter (interface + impl)
+│   │       │   ├── interfaces.go    # DataFeedProvider
+│   │       │   ├── coingecko.go
+│   │       │   └── cryptocompare.go
+│   │       └── config/              # Seed config loader (signal types, project seeds)
+│   │           └── seed.go
+│   │
+│   ├── pkg/                         # Shared utilities (domain-agnostic)
+│   │   ├── httputil/                # HTTP helpers, error response envelope
+│   │   ├── validate/                # JSON Schema validation helpers
+│   │   └── testutil/                # Test fixtures, DB helpers
+│   │
 │   └── tests/
-│       ├── contract/                # HTTP contract tests (per endpoint)
-│       ├── integration/             # Supabase, NATS, Stripe webhook integration tests
-│       └── unit/                    # Pure unit tests
+│       ├── platform/                # Platform contract + integration tests
+│       │   ├── contract/            # auth, billing, notification contract tests
+│       │   └── integration/         # Supabase, Stripe webhook integration tests
+│       └── domain/
+│           └── investment/          # Domain-specific tests
+│               ├── contract/        # strategies, alerts, watchlist contract tests
+│               ├── integration/     # signal notification, strategy lifecycle tests
+│               └── unit/            # evaluator, validator unit tests
 │
 ├── ai-service/                      # Python AI/data service
 │   ├── src/
-│   │   ├── main.py                  # FastAPI app factory; mounts routers; configures logging
+│   │   ├── main.py                  # FastAPI app factory; mounts platform + domain routers
 │   │   ├── config.py                # Settings via pydantic-settings (env vars, .env)
-│   │   ├── health.py                # GET /health (liveness) + GET /health/ready (readiness)
-│   │   ├── news/
-│   │   │   ├── provider.py          # Abstract NewsProvider + NewsItem dataclass
-│   │   │   ├── cryptopanic.py       # CryptoPanic adapter (primary)
-│   │   │   ├── duckduckgo.py        # DuckDuckGo fallback adapter
-│   │   │   ├── router.py            # GET /news/{project_slug}
-│   │   │   └── quota.py             # Daily quota counter (Redis-backed)
-│   │   ├── indicators/
-│   │   │   ├── router.py            # POST /indicators/{asset} — accepts OHLCV slice, returns RSI + volume spike + MACD + Bollinger + price stats
-│   │   │   ├── pct_change_router.py # POST /pct_change/{asset} — accepts OHLCV slice + window_minutes, returns pct_change (separate cache key)
-│   │   │   ├── rsi.py               # 14-period RSI via pandas-ta (vectorised)
-│   │   │   ├── volume_spike.py      # Volume spike: current vol vs 20-period SMA ratio via pandas-ta
-│   │   │   ├── macd.py              # MACD(12,26,9) crossover detection via pandas-ta
-│   │   │   ├── bollinger.py         # Bollinger Bands(20,2) breach detection via pandas-ta
-│   │   │   ├── price_stats.py       # 24 h OHLCV summary (open/high/low/close/pct_change)
-│   │   │   └── cache.py             # Redis-backed indicator cache (TTL = 25 s, under 30 s poll)
-│   │   ├── enrichment/
-│   │   │   ├── sentiment.py         # News headline sentiment scoring (VADER)
-│   │   │   └── router.py            # POST /enrich/news — scores + deduplicates news items
-│   │   └── projects/
-│   │       ├── registry.py          # DB-backed slug→{display_name, symbol, coingecko_id, quote_currency} map
-│   │       └── router.py            # GET /projects — curated project list
+│   │   │
+│   │   ├── platform/                # DOMAIN-AGNOSTIC (reusable)
+│   │   │   ├── compute/             # Generic computation engine
+│   │   │   │   ├── interfaces.py    # ComputeEngine ABC, ComputeHandler ABC
+│   │   │   │   ├── cache.py         # Redis-backed result cache (generic key pattern)
+│   │   │   │   └── resample.py      # Generic OHLCV resampling utility
+│   │   │   ├── enrichment/          # Generic content enrichment pipeline
+│   │   │   │   ├── interfaces.py    # ContentEnricher ABC
+│   │   │   │   └── sentiment.py     # VADER sentiment (reusable for any text)
+│   │   │   ├── content/             # Generic content provider
+│   │   │   │   └── interfaces.py    # ContentProvider ABC, ContentItem dataclass
+│   │   │   └── health.py            # GET /health (liveness) + GET /health/ready (readiness)
+│   │   │
+│   │   └── domain/                  # DOMAIN-SPECIFIC (swappable)
+│   │       └── investment/
+│   │           ├── register.py      # register(app) — mounts domain routers
+│   │           ├── indicators/      # Indicator computation implementations
+│   │           │   ├── rsi.py       # RSI compute handler
+│   │           │   ├── volume_spike.py
+│   │           │   ├── macd.py
+│   │           │   ├── bollinger.py
+│   │           │   ├── price_stats.py
+│   │           │   ├── pct_change.py
+│   │           │   ├── router.py    # POST /indicators/{asset}
+│   │           │   ├── pct_change_router.py  # POST /pct_change/{asset}
+│   │           │   └── cache.py     # Redis-backed indicator cache (TTL = 25 s)
+│   │           ├── news/            # News content providers
+│   │           │   ├── provider.py  # Abstract NewsProvider + NewsItem dataclass
+│   │           │   ├── cryptopanic.py   # CryptoPanic adapter (primary)
+│   │           │   ├── duckduckgo.py    # DuckDuckGo fallback adapter
+│   │           │   ├── quota.py     # Daily quota counter (Redis-backed)
+│   │           │   └── router.py    # GET /news/{project_slug}
+│   │           ├── enrichment/      # Investment-specific enrichment
+│   │           │   └── router.py    # POST /enrich/news
+│   │           └── projects/        # Crypto project registry
+│   │               ├── registry.py  # DB-backed slug→{display_name, symbol, ...} map
+│   │               └── router.py    # GET /projects
 │   └── tests/
-│       ├── contract/                # HTTP contract tests (all endpoints)
-│       ├── integration/             # Redis, CryptoPanic, indicator pipeline tests
-│       └── unit/                    # Adapter parsing, RSI math, sentiment, quota logic
+│       ├── platform/                # Platform compute/enrichment tests
+│       └── domain/
+│           └── investment/
+│               ├── contract/        # HTTP contract tests (all domain endpoints)
+│               ├── integration/     # Redis, CryptoPanic, indicator pipeline tests
+│               └── unit/            # Adapter parsing, RSI math, sentiment, quota logic
 │
-├── agent-gateway/                      # Agent Gateway configuration
-│   ├── agents/
-│   │   └── digest-agent/
-│   │       ├── AGENT.md             # Agent persona + instructions
-│   │       ├── HEARTBEAT.md         # Health check checklist
-│   │       └── skills/
-│   │           └── crypto-digest.md # Digest generation skill
-│   └── docker-compose.agent-gateway.yml
+├── agent-gateway/                   # Agent Gateway configuration (pluggable)
+│   ├── goclaw/                      # GoClaw-specific config (DEFAULT)
+│   │   ├── docker-compose.goclaw.yml
+│   │   ├── .env.goclaw
+│   │   └── agents/
+│   │       ├── _platform/           # DOMAIN-AGNOSTIC agent utilities (reusable)
+│   │       │   └── HEARTBEAT.md
+│   │       └── digest-agent/        # DOMAIN-SPECIFIC: investment digest
+│   │           ├── AGENT.md         # Investment persona + instructions
+│   │           └── skills/
+│   │               └── crypto-digest.md
+│   ├── openclaw/
+│   ├── picoclaw/
+│   ├── nanobot/
+│   └── zeroclaw/
 │
 ├── frontend/                        # React SPA
 │   ├── src/
-│   │   ├── components/              # Design system primitives + feature components
-│   │   │   └── *.stories.tsx        # Storybook story files co-located with components
-│   │   ├── pages/
-│   │   │   ├── auth/                # SignIn, SignUp, ForgotPassword
-│   │   │   ├── dashboard/           # Strategy list + quick stats
-│   │   │   ├── strategies/          # Strategy create/edit, signal rule builder
-│   │   │   ├── alerts/              # Alert history view
-│   │   │   ├── watchlist/           # Watchlist management
-│   │   │   ├── settings/            # Telegram linking, timezone, account
-│   │   │   ├── billing/             # Subscription management (Stripe)
-│   │   │   └── admin/               # Admin: user management, subscription config
-│   │   ├── services/                # API client (TanStack Query hooks)
-│   │   └── lib/                     # Utilities, design tokens
+│   │   ├── platform/                # DOMAIN-AGNOSTIC (reusable)
+│   │   │   ├── components/          # Design system primitives + shared components
+│   │   │   │   └── *.stories.tsx    # Storybook story files
+│   │   │   ├── pages/
+│   │   │   │   ├── auth/            # SignIn, SignUp, ForgotPassword
+│   │   │   │   ├── settings/        # Telegram linking, timezone, account
+│   │   │   │   ├── billing/         # Subscription management (Stripe)
+│   │   │   │   └── admin/           # Admin: user management
+│   │   │   ├── hooks/               # useAuth, useSubscription, useNotification
+│   │   │   ├── services/            # Platform API client (TanStack Query hooks)
+│   │   │   └── lib/                 # Utilities, design tokens
+│   │   │
+│   │   └── domain/                  # DOMAIN-SPECIFIC (swappable)
+│   │       └── investment/
+│   │           ├── pages/
+│   │           │   ├── dashboard/   # Strategy list + quick stats
+│   │           │   ├── strategies/  # Strategy create/edit, signal rule builder
+│   │           │   ├── alerts/      # Alert history view
+│   │           │   └── watchlist/   # Watchlist management
+│   │           ├── components/      # Domain-specific components
+│   │           │   └── *.stories.tsx
+│   │           └── services/        # Domain API client hooks
 │   ├── .storybook/                  # Storybook config (main.ts, preview.ts)
 │   └── tests/
 │       ├── unit/                    # Vitest + React Testing Library
@@ -352,18 +477,26 @@ investment-intel/
 │   └── monitoring/                  # Prometheus scrape config, Grafana dashboards
 │
 ├── config/                          # Externalised business configuration
-│   ├── seed.yaml                    # Signal types, project seed data, system tunables (FR-026)
-│   └── seed.schema.json             # JSON Schema for seed.yaml validation
+│   ├── platform.env.example         # Platform config template (auth, billing, infra)
+│   └── domain/
+│       └── investment/
+│           ├── seed.yaml            # Signal types, project seed data, system tunables (FR-026)
+│           └── seed.schema.json     # JSON Schema for seed.yaml validation
 │
 ├── contracts/                       # Portable format schemas
 │   └── strategy-definition.schema.json  # Strategy Definition Format JSON Schema (FR-027)
 │
 └── migrations/                      # PostgreSQL migrations (golang-migrate)
+    ├── 001-099: platform_*          # Platform schema (users, notifications, subscriptions)
+    └── 100-199: app_*               # Domain schema (strategies, alerts, watchlist, projects)
 ```
 
-**Structure Decision**: Web application layout (backend + AI service + frontend + agent gateway).
-Chosen over single-project because Go, Python, and React are distinct runtimes with independent
-build/deploy pipelines. The Agent Gateway runs as a fourth service using its own Docker image.
+**Structure Decision**: Domain-decoupled platform architecture (backend + AI service + frontend + agent gateway).
+Chosen because the platform capabilities (auth, billing, notification, event bus, AI agents) are
+domain-agnostic and must be reusable for non-investment domains in the future. The investment-specific
+business logic is isolated in `domain/investment/` directories across all services, connected to the
+platform via well-defined interfaces. See [architecture-domain-decoupling.md](./architecture-domain-decoupling.md)
+for the full architecture decision record with interface definitions and migration rules.
 
 ---
 
@@ -631,7 +764,7 @@ Key findings to carry into implementation:
 - The Agent Gateway's built-in Telegram channel handles bot token + webhook; set `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN`
 
 ### Signal Evaluation
-- 30 s polling loop implemented as a Go ticker in `internal/signals/`; one goroutine per active
+- 30 s polling loop implemented as a Go ticker in `domain/investment/signals/`; one goroutine per active
   strategy is wasteful at scale — evaluate all active strategies in a single pass per tick
 - RSI calculation requires `14 × candle_minutes` 1-minute candles from CryptoCompare (e.g.,
   `candle_minutes=15` → 210 candles, `candle_minutes=60` → 840 candles); ai-service resamples
@@ -656,7 +789,7 @@ Key findings to carry into implementation:
 - **NATS stream topology** (two streams — incompatible retention policies require separation):
   - `SIGNALS` stream: `signal.triggered.>`, `WorkQueuePolicy` (auto-delete on ACK), `MaxAge 1h`, `FileStorage`, `Replicas 1`; consumer `alerts-dispatcher` with `MaxAckPending: 100` (flow-control ceiling)
   - `ALERT_QUEUE` stream: `alert.pending` + `alert.expired`, `LimitsPolicy`, `MaxAge 25h`, `FileStorage`, `Replicas 1`; consumer `alerts-redriver` with `MaxDeliver: 48`, `AckWait: 60s`
-  - Both streams initialised explicitly on backend startup via `pkg/nats/` — do NOT rely on NATS auto-create defaults
+  - Both streams initialised explicitly on backend startup via `platform/eventbus/` — do NOT rely on NATS auto-create defaults
   - `FileStorage` requires a named Docker volume (`nats-data:/data`) in both local and production compose files
 - Docker compose defines two explicit networks: `public` (Traefik, frontend, backend) and `internal` (backend, ai-service, Agent Gateway, NATS, Redis, Postgres); ai-service is on `internal` only — never exposed via Traefik
 - On signal fire: publish `signal.triggered.{asset}` to `SIGNALS` stream (subject is asset-keyed; user isolation enforced by `user_id` in payload); `alerts-dispatcher` persists Alert and calls Telegram Bot API directly (not via the Agent Gateway — the gateway handles digest only; real-time alerts go direct for latency); if user has no linked Telegram, dispatcher sets `telegram_status=Pending` and publishes `alert.pending` to `ALERT_QUEUE`
@@ -671,7 +804,7 @@ Key findings to carry into implementation:
   ~2 req/min; free-tier headroom supports up to ~7 assets at 30 s polling)
 - RSI requires `/coins/{id}/ohlc` endpoint (returns up to 30 days of OHLC at 4h resolution);
   for intraday RSI, use CryptoCompare `histominute` endpoint (free tier: 100k req/month)
-- Abstracted behind `pkg/marketdata.Provider` interface — swap without changing signal evaluator
+- Abstracted behind `domain/investment/marketdata.Provider` interface — swap without changing signal evaluator
 - **CryptoCompare request budget analysis** (POC worst-case per 30 s tick):
   - Distinct `{asset, candle_minutes}` combos for indicators: 2 assets × 3 candle sizes = **6 calls**
   - Distinct `{asset, window_minutes}` combos for pct_change: 2 assets × 4 windows (5,15,60,240) = **8 calls**
@@ -738,11 +871,11 @@ Key findings to carry into implementation:
 - Supabase Auth handles JWT issuance; Go backend validates JWTs using Supabase public key
 - Row Level Security (RLS) on all tables ensures users can only read/write their own rows
 - Email verification and password reset are built into Supabase Auth — no custom flow required
-  (FR-020 is satisfied by delegating these flows to Supabase; `internal/auth/` only needs JWT
+  (FR-020 is satisfied by delegating these flows to Supabase; `platform/auth/` only needs JWT
   validation middleware and user-context injection)
 
 ### Stripe
 - POC uses a single subscription product with one price (monthly flat fee)
-- Stripe webhook events consumed by `internal/billing/`: `customer.subscription.created`,
+- Stripe webhook events consumed by `platform/billing/`: `customer.subscription.created`,
   `customer.subscription.deleted`, `invoice.payment_failed`
 - Subscription status stored on `users` table; middleware checks status on protected routes
