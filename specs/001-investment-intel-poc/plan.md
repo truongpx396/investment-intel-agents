@@ -13,9 +13,9 @@ Users maintain a watchlist of crypto projects and receive a daily AI-summarised 
 A React web app hosts all configuration UX; alert history is visible per strategy; billing and
 subscription management run through Stripe.
 
-The AI agent layer (GoClaw) orchestrates the digest pipeline: a scheduled GoClaw cron agent polls
+The AI agent layer (Agent Gateway) orchestrates the digest pipeline: a scheduled cron agent polls
 the news API, invokes the LLM summarisation tool, and dispatches the Telegram digest — replacing
-bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `message` tools.
+bespoke Python orchestration with the Agent Gateway's built-in cron, HTTP fetch, and message tools.
 
 ---
 
@@ -24,18 +24,18 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 **Language/Version**:
 - Backend API: Go 1.24+ (Golang)
 - AI/Data services: Python 3.12+
-- GoClaw agent gateway: Go 1.26+ (per GoClaw prerequisites)
+- Agent Gateway: varies by implementation (GoClaw: Go 1.26+, OpenClaw: Node 24+, PicoClaw: Go 1.25+, nanoBot: Python 3.11+, ZeroClaw: Rust stable)
 - Frontend: Node.js 22+ (React 19)
 
 **Primary Dependencies**:
 - **API Gateway**: Traefik v3 (routing, TLS termination, rate limiting)
 - **Auth / User management**: Supabase (PostgreSQL + Auth + Row Level Security)
 - **Billing**: Stripe SDK (Go + React)
-- **AI Agent gateway**: GoClaw v1.74+ → current (multi-agent orchestration, Telegram channel, cron, LLM tools); **web UI embedded in binary** since Apr 2026 — no separate web container needed; dashboard at `http://localhost:18790`; permission model now has **6 layers** (added: per-agent grants with setting-level overrides, Apr 2026)
+- **AI Agent gateway**: Pluggable — GoClaw v1.74+ (default), OpenClaw, PicoClaw, nanoBot, or ZeroClaw (see [Agent Gateway Abstraction](agent-gateway-abstraction.md)); all provide cron, LLM, Telegram channel, and web dashboard; dashboard at `http://localhost:18790`
 - **Message queue**: NATS JetStream (signal event fanout, notification queue)
 - **Frontend**: ReactJS 19 + TailwindCSS v4 + TanStack Router + TanStack Query
 - **Component development & docs**: Storybook 8 (`@storybook/react-vite`) — isolated component development, visual regression baseline, and living design-system documentation
-- **LLM (digest summarisation)**: Anthropic Claude (via GoClaw provider config, claude-3-5-haiku)
+- **LLM (digest summarisation)**: Anthropic Claude (via Agent Gateway provider config, claude-3-5-haiku)
 - **Crypto news API**: CryptoPanic free tier (50 req/day per token; DuckDuckGo fallback on quota
   exhaustion). Abstracted behind `NewsProvider` interface in `ai-service/src/news/`.
 - **Market data feed**: CoinGecko Free API (no key required, ≤30 req/min) for spot price and
@@ -49,14 +49,14 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
   when ai-service is degraded
 - **Technical indicators**: `pandas-ta` (RSI, MACD, Bollinger) + `numpy` — owned entirely by
   Python ai-service; Go signal evaluator calls `POST /indicators/{asset}` to get pre-computed values
-- **News sentiment**: `vaderSentiment` (POC) — fast, CPU-only; scores news headlines before GoClaw
+- **News sentiment**: `vaderSentiment` (POC) — fast, CPU-only; scores news headlines before Agent Gateway
   LLM step; reduces token waste on low-signal or duplicate items
 - **Logging**: zerolog (Go), structlog (Python)
 - **Monitoring**: Prometheus + Grafana
 
 **Storage**:
 - PostgreSQL 18 with pgvector (primary store — users, strategies, signal rules, alerts, watchlists,
-  digests; also used by GoClaw for its multi-tenant store)
+  digests; also used by the Agent Gateway for its multi-tenant store)
 - Redis 7 (API response cache, rate-limit counters, session tokens, signal evaluation state)
 
 **Testing**:
@@ -69,7 +69,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 
 **Target Platform**: DigitalOcean Droplets (Linux/amd64) + Cloudflare DNS/CDN/WAF
 
-**Project Type**: Web service (React SPA + Go microservices + Python AI service + GoClaw agent gateway)
+**Project Type**: Web service (React SPA + Go microservices + Python AI service + pluggable Agent Gateway)
 
 **Performance Goals**:
 - Signal-triggered Telegram notification: < 60 s end-to-end (30 s poll cycle + < 30 s delivery)
@@ -79,7 +79,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 
 **Constraints**:
 - POC scale: ≤ 50 registered users — no horizontal scaling required
-- GoClaw single binary (~25 MB, ~35 MB RAM idle) fits on smallest Droplet alongside other services
+- Agent Gateway container (GoClaw default: ~25 MB, ~35 MB RAM idle) fits on smallest Droplet alongside other services
 - Market data polling at 30 s intervals must stay within free-tier or low-cost API rate limits
 - Stripe integration limited to subscription creation and webhook processing (no custom invoicing)
 
@@ -107,7 +107,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 | TDD: tests written before implementation | ✅ PASS | Red-Green-Refactor enforced per task phase |
 | Unit coverage ≥ 80%; critical paths ≥ 95% | ✅ PASS | Auth, payment webhooks, signal evaluation, alert dispatch = critical paths |
 | Contract tests for API changes | ✅ PASS | All REST contracts in `tests/contract/` must precede handler implementation |
-| Integration tests for NATS, Supabase, GoClaw, Stripe webhook | ✅ PASS | See Phase 2 foundational tasks |
+| Integration tests for NATS, Supabase, Agent Gateway, Stripe webhook | ✅ PASS | See Phase 2 foundational tasks |
 
 ### Principle III — User Experience Consistency
 
@@ -124,7 +124,7 @@ bespoke Python orchestration with GoClaw's built-in `cron`, `web_fetch`, and `me
 | p95 latency budget defined: REST API < 200 ms | ✅ PASS | Defined in Technical Context above |
 | Notification SLA defined: < 60 s | ✅ PASS | Defined in spec FR-006; 30 s poll cycle satisfies with headroom |
 | LCP ≤ 2.5 s, CLS ≤ 0.1 | ✅ PASS | Cloudflare CDN + code-split React bundles |
-| Background job SLA: digest before 09:00 UTC | ✅ PASS | GoClaw cron expression set to 08:30 UTC (delivers before cutoff); per-user timezone scheduling deferred to post-POC |
+| Background job SLA: digest before 09:00 UTC | ✅ PASS | Agent Gateway cron set to 08:30 UTC (delivers before cutoff); per-user timezone scheduling deferred to post-POC |
 
 **Constitution verdict**: ✅ ALL GATES PASS — no violations to justify.
 
@@ -144,33 +144,33 @@ A single authoritative reference for which service owns each concern. When in do
 | Market data fetching (CoinGecko spot price, CryptoCompare OHLCV) | **Go backend** (`pkg/marketdata/`) | Raw data fetch stays in Go; OHLCV slices are forwarded to ai-service for indicator computation |
 | **Technical indicator computation (RSI, volume SMA, MACD, Bollinger Bands, OHLCV stats, intraday % change)** | **Python ai-service** | `pandas-ta` / `numpy` vectorised math; zero-effort 14-period RSI, 20-period volume SMA ratio, MACD(12,26,9), Bollinger Bands(20,2) vs hand-rolled Go; accepts `candle_minutes` parameter to resample 1-min candles into the user-selected candle size (5/15/60 min) before computing indicators; result cached in Redis at 25 s TTL keyed by `{asset}:{candle_minutes}`; Go evaluator calls `POST /indicators/{asset}` (indicators) and `POST /pct_change/{asset}` (intraday % change — separate cache key by `window_minutes`) per tick |
 | **News fetching & `NewsProvider` interface** | **Python ai-service** | CryptoPanic + DuckDuckGo fallback; async `httpx`; quota tracking; `GET /news/{slug}` |
-| **News sentiment scoring & deduplication** | **Python ai-service** | `vaderSentiment` for headline sentiment; deduplication before GoClaw summarisation; `POST /enrich/news` |
-| **Curated project registry** | **Python ai-service** | **DB-backed**: reads from `app_projects` table (ai-service connects to shared Postgres in read-only mode); cached in-memory with 5 min TTL; `GET /projects` returns `{slug, display_name, symbol, coingecko_id, quote_currency, is_signal_asset}`; single source of truth for both React watchlist/strategy form and GoClaw skill; `quote_currency` (default `USD`) is consumed by Go market data adapters; adding a new project is a data-only change (visible within 5 min, no code deploy) |
-| NATS publish/subscribe (signal events, alert queue, DLQ) | **Go backend** | All real-time event flow is Go-owned; GoClaw and ai-service do NOT touch NATS |
-| Alert persistence & Telegram delivery (real-time) | **Go backend** | Direct Telegram Bot API call for < 60 s latency; GoClaw's scheduler is too coarse for real-time |
+| **News sentiment scoring & deduplication** | **Python ai-service** | `vaderSentiment` for headline sentiment; deduplication before Agent Gateway summarisation; `POST /enrich/news` |
+| **Curated project registry** | **Python ai-service** | **DB-backed**: reads from `app_projects` table (ai-service connects to shared Postgres in read-only mode); cached in-memory with 5 min TTL; `GET /projects` returns `{slug, display_name, symbol, coingecko_id, quote_currency, is_signal_asset}`; single source of truth for both React watchlist/strategy form and Agent Gateway skill; `quote_currency` (default `USD`) is consumed by Go market data adapters; adding a new project is a data-only change (visible within 5 min, no code deploy) |
+| NATS publish/subscribe (signal events, alert queue, DLQ) | **Go backend** | All real-time event flow is Go-owned; the Agent Gateway and ai-service do NOT touch NATS |
+| Alert persistence & Telegram delivery (real-time) | **Go backend** | Direct Telegram Bot API call for < 60 s latency; the Agent Gateway's scheduler is too coarse for real-time |
 | Telegram account linking (deep-link, webhook, bot token) | **Go backend** | Stateful linking flow requires Postgres writes; linked to auth middleware |
 | Stripe checkout, webhook processing, subscription gating | **Go backend** | Financial operations require transaction safety and webhook signature validation |
-| PostgreSQL migrations | **Go backend** (`migrations/`, `golang-migrate`) | Single migration runner owns schema; GoClaw uses `gc_` prefix namespace only |
-| Daily digest orchestration (cron, fetch, summarise, send) | **GoClaw** | Built-in `cron`, `web_fetch`, LLM provider, and `message` tools; calls ai-service `GET /news/{slug}` and `POST /enrich/news` |
-| LLM summarisation (claude-3-5-haiku) | **GoClaw** | LLM provider configured natively in GoClaw; enriched + deduplicated news items from ai-service are the input |
-| Telegram digest delivery | **GoClaw** | GoClaw Telegram channel; same bot as Go alert dispatcher (single bot, see §Single Telegram Bot below) |
-| Per-user agent context & watchlist retrieval | **GoClaw → Go `/internal/` API** | GoClaw skill calls Go's `/internal/watchlist` using service token (T057a) |
+| PostgreSQL migrations | **Go backend** (`migrations/`, `golang-migrate`) | Single migration runner owns schema; Agent Gateway uses `gc_` prefix namespace only |
+| Daily digest orchestration (cron, fetch, summarise, send) | **Agent Gateway** | Built-in cron, HTTP fetch, LLM provider, and message tools; calls ai-service `GET /news/{slug}` and `POST /enrich/news` |
+| LLM summarisation (claude-3-5-haiku) | **Agent Gateway** | LLM provider configured natively in the gateway; enriched + deduplicated news items from ai-service are the input |
+| Telegram digest delivery | **Agent Gateway** | Agent Gateway Telegram channel; same bot as Go alert dispatcher (single bot, see §Single Telegram Bot below) |
+| Per-user agent context & watchlist retrieval | **Agent Gateway → Go `/internal/` API** | Agent Gateway skill calls Go's `/internal/watchlist` using service token (T057a) |
 | UI (all configuration, history, settings, billing pages) | **React SPA** | Single-page app via Cloudflare CDN; all data via TanStack Query → Go REST API |
 | Design system primitives & component stories | **React SPA** (Storybook) | Co-located `*.stories.tsx`; visual baseline and living docs |
-| Routing, TLS termination, rate limiting | **Traefik** | Handles `api.`, `app.`, `goclaw.` subdomains; services never terminate TLS directly |
-| Metrics exposure & tracing | **Go backend** + **GoClaw** (OTLP) + **ai-service** (`/metrics`) | All three expose Prometheus metrics; GoClaw emits OTLP traces |
+| Routing, TLS termination, rate limiting | **Traefik** | Handles `api.`, `app.`, `agent.` subdomains; services never terminate TLS directly |
+| Metrics exposure & tracing | **Go backend** + **Agent Gateway** (OTLP) + **ai-service** (`/metrics`) | All three expose Prometheus metrics; Agent Gateway emits OTLP traces |
 
 ### Cross-Service Communication Rules
 
 | From | To | Protocol | Auth |
 |---|---|---|---|
 | React SPA | Go backend | HTTPS REST (`/api/v1/`) | Supabase JWT (httpOnly cookie) |
-| GoClaw digest agent | Go backend | HTTPS REST (`/internal/`) | Static bearer token (`GOCLAW_INTERNAL_TOKEN`) |
-| GoClaw digest agent | Python ai-service | `web_fetch` via `GET /news/{slug}`, `POST /enrich/news`, `GET /projects` | None (internal network only) |
+| Agent Gateway digest agent | Go backend | HTTPS REST (`/internal/`) | Static bearer token (`AGENT_GATEWAY_INTERNAL_TOKEN`) |
+| Agent Gateway digest agent | Python ai-service | HTTP fetch via `GET /news/{slug}`, `POST /enrich/news`, `GET /projects` | None (internal network only) |
 | Go backend (signal evaluator) | Python ai-service | HTTP `POST /indicators/{asset}`, `POST /pct_change/{asset}` | None (internal network only) |
 | Go backend | NATS JetStream | NATS protocol | NATS credentials |
 | Go backend | Telegram Bot API | HTTPS | `TELEGRAM_BOT_TOKEN` (shared single bot) |
-| GoClaw | Telegram (digest) | GoClaw Telegram channel | Same `TELEGRAM_BOT_TOKEN` configured as `GOCLAW_TELEGRAM_BOT_TOKEN` |
+| Agent Gateway | Telegram (digest) | Agent Gateway Telegram channel | Same `TELEGRAM_BOT_TOKEN` configured as `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN` |
 | Go backend | Supabase (Auth + DB) | HTTPS + postgres:// | Supabase service role key + RLS |
 | Go backend | Stripe | HTTPS | Stripe secret key + webhook signing secret |
 | Go backend | CoinGecko / CryptoCompare | HTTPS | No key / free-tier key |
@@ -205,46 +205,45 @@ Python ai-service internal endpoints use the same envelope for consistency, thou
 |---|---|
 | **Go backend** | Call LLM APIs directly; run digest orchestration; compute technical indicators (delegate to ai-service); write to `gc_` schema tables |
 | **Python ai-service** | Evaluate signal threshold rules (that logic stays in Go); touch NATS; send Telegram messages; own any user-facing Postgres tables |
-| **GoClaw** | Connect to NATS; perform real-time alert dispatch; own Postgres migrations; compute indicators directly |
+| **Agent Gateway** | Connect to NATS; perform real-time alert dispatch; own Postgres migrations; compute indicators directly |
 | **React SPA** | Call market data or news APIs directly; store secrets; implement business logic |
-| **Traefik** | Contain application logic; be aware of NATS or GoClaw internals |
+| **Traefik** | Contain application logic; be aware of NATS or Agent Gateway internals |
 
 ---
 
-## GoClaw Agent Architecture
+## Agent Gateway Architecture
 
-GoClaw (`github.com/nextlevelbuilder/goclaw`) replaces bespoke Python orchestration for the AI
-agent layer. Key features used in this POC:
+The Agent Gateway is a **pluggable** component — any framework that satisfies the [Agent Gateway Abstraction](agent-gateway-abstraction.md) contract can be used. The default is GoClaw (`github.com/nextlevelbuilder/goclaw`), which replaces bespoke Python orchestration for the AI agent layer. Supported alternatives: OpenClaw, PicoClaw, nanoBot, ZeroClaw.
 
-| GoClaw Feature | POC Usage |
-|----------------|-----------|
-| **Cron scheduling** (`cron` tool) | Daily digest trigger at 08:30 UTC |
-| **web_fetch tool** | Fetches news items from crypto news API per watchlist project |
+Key capabilities required from the gateway:
+
+| Required Capability | POC Usage |
+|---------------------|-----------|
+| **Cron scheduling** | Daily digest trigger at 08:30 UTC |
+| **HTTP fetch tool** | Fetches news items from crypto news API per watchlist project |
 | **LLM provider (Anthropic)** | Summarises raw news items via claude-3-5-haiku |
 | **Telegram channel** | Dispatches digest messages and (future) alert escalation |
-| **Multi-tenant PostgreSQL** | GoClaw shares the same Postgres instance; per-user agent contexts |
-| **message tool** | Sends formatted digest to each user's Telegram chat |
-| **Agent teams + task board** | Optional future: coordinator agent delegates per-user digest to sub-agents |
-| **Subagent `waitAll` + auto-retry** | Parallel `web_fetch` per watchlist project with automatic retry and token tracking (Apr 2026) |
-| **Per-agent grants** | Scope digest agent's backend API access to specific `/internal/` endpoints; 6th permission layer (Apr 2026) |
-| **Channel health diagnostics** | Actionable Telegram channel health panel with remediation steps — use for T010/T031 debugging (Apr 2026) |
-| **Built-in observability (OTLP)** | LLM call tracing feeds Prometheus/Grafana |
+| **Shared PostgreSQL** | Gateway shares the same Postgres instance; per-user agent contexts |
+| **Message tool** | Sends formatted digest to each user's Telegram chat |
+| **Subagent / parallel execution** | Parallel HTTP fetch per watchlist project with automatic retry |
+| **Scoped permissions** | Scope digest agent's backend API access to specific `/internal/` endpoints |
+| **Observability (OTLP)** | LLM call tracing feeds Prometheus/Grafana |
 
-**Deployment**: GoClaw runs as a **single Docker container** (one binary — web UI + API embedded, dashboard at `http://localhost:18790`) alongside backend services, connected to the shared Postgres and Redis instances. **No separate `goclaw-web` container is needed** (web UI was embedded into the Go binary in Apr 2026). NATS is not used by GoClaw directly — the Go signal service publishes to NATS; GoClaw operates on its own scheduler for digest tasks.
+**Deployment**: The Agent Gateway runs as a **single Docker container** (dashboard at `http://localhost:18790`) alongside backend services, connected to the shared Postgres and Redis instances. NATS is not used by the gateway directly — the Go signal service publishes to NATS; the gateway operates on its own scheduler for digest tasks.
 
 ### Single Telegram Bot Architecture
 
-The system uses **one Telegram bot** (`TELEGRAM_BOT_TOKEN`) shared between Go backend and GoClaw:
+The system uses **one Telegram bot** (`TELEGRAM_BOT_TOKEN`) shared between Go backend and the Agent Gateway:
 
 | Responsibility | Owner | Mechanism |
 |---|---|---|
 | Account linking (`/start?token=`) | **Go backend** | Telegram webhook registered at `https://api.<domain>/telegram/webhook`; Go processes `/start` deep-link updates and linking confirmation messages |
 | Real-time alert delivery | **Go backend** | Direct `sendMessage` API call via bot token; latency-critical path (< 60 s SLA) |
-| Daily digest delivery | **GoClaw** | GoClaw Telegram channel configured with the same bot token (`GOCLAW_TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN`); uses `message` tool to call `sendMessage` |
+| Daily digest delivery | **Agent Gateway** | Agent Gateway Telegram channel configured with the same bot token (`AGENT_GATEWAY_TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN`); uses message tool to call `sendMessage` |
 
-**Webhook routing**: Telegram delivers all bot updates (messages, commands) to the single registered webhook URL owned by Go backend. GoClaw never receives inbound updates — it only **sends** outbound messages via `sendMessage`. This avoids the Telegram limitation of one webhook per bot. The Go backend MUST filter webhook updates to only process `/start` commands for account linking; all other inbound messages are ignored (no command router needed for POC).
+**Webhook routing**: Telegram delivers all bot updates (messages, commands) to the single registered webhook URL owned by Go backend. The Agent Gateway never receives inbound updates — it only **sends** outbound messages via `sendMessage`. This avoids the Telegram limitation of one webhook per bot. The Go backend MUST filter webhook updates to only process `/start` commands for account linking; all other inbound messages are ignored (no command router needed for POC).
 
-**Configuration**: Both services read the same bot token from the environment. In `docker-compose.yml`, set `TELEGRAM_BOT_TOKEN` once and reference it in both Go backend and GoClaw service definitions (`GOCLAW_TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}`).
+**Configuration**: Both services read the same bot token from the environment. In `docker-compose.yml`, set `TELEGRAM_BOT_TOKEN` once and reference it in both Go backend and Agent Gateway service definitions (`AGENT_GATEWAY_TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}`).
 
 ---
 
@@ -255,7 +254,7 @@ The system uses **one Telegram bot** (`TELEGRAM_BOT_TOKEN`) shared between Go ba
 ```text
 specs/001-investment-intel-poc/
 ├── plan.md              ← this file
-├── research.md          ← GoClaw integration patterns, market data feed evaluation
+├── research.md          ← Agent Gateway integration patterns, market data feed evaluation
 ├── quickstart.md        ← local dev setup
 ├── contracts/
 │   ├── rest-api.md      ← REST endpoint contracts (auth, strategies, alerts, watchlist, digest)
@@ -317,14 +316,14 @@ investment-intel/
 │       ├── integration/             # Redis, CryptoPanic, indicator pipeline tests
 │       └── unit/                    # Adapter parsing, RSI math, sentiment, quota logic
 │
-├── goclaw/                          # GoClaw agent configuration
+├── agent-gateway/                      # Agent Gateway configuration
 │   ├── agents/
 │   │   └── digest-agent/
 │   │       ├── AGENT.md             # Agent persona + instructions
 │   │       ├── HEARTBEAT.md         # Health check checklist
 │   │       └── skills/
 │   │           └── crypto-digest.md # Digest generation skill
-│   └── docker-compose.goclaw.yml
+│   └── docker-compose.agent-gateway.yml
 │
 ├── frontend/                        # React SPA
 │   ├── src/
@@ -364,7 +363,7 @@ investment-intel/
 
 **Structure Decision**: Web application layout (backend + AI service + frontend + agent gateway).
 Chosen over single-project because Go, Python, and React are distinct runtimes with independent
-build/deploy pipelines. GoClaw runs as a fourth service using its own Docker image.
+build/deploy pipelines. The Agent Gateway runs as a fourth service using its own Docker image.
 
 ---
 
@@ -613,23 +612,23 @@ No constitution violations — no entries required.
 
 Key findings to carry into implementation:
 
-### GoClaw Integration
+### Agent Gateway Integration (GoClaw default)
 - GoClaw v1.74+ requires Go 1.26, PostgreSQL 18 + pgvector, Redis (optional but recommended)
 - Digest agent uses `cron` tool (cron expression `30 8 * * *` = 08:30 UTC daily)
 - **Apr 2026 updates** (apply during T006/T010/T055–T057a):
-  - Web UI is now embedded in the Go binary — single `latest` Docker image, dashboard at `http://localhost:18790`; no `goclaw-web` service in docker-compose
+  - Web UI is now embedded in the Go binary — single `latest` Docker image, dashboard at `http://localhost:18790`; no `agent-gateway-web` service in docker-compose
   - Cron timezone handling is stable for all schedule kinds (`cron`, `at`, `every`); "Run Now" button works for manual testing
-  - Subagents support `waitAll` + auto-retry + token tracking — use for parallel `web_fetch` per watchlist project
+  - Subagents support `waitAll` + auto-retry + token tracking — use for parallel HTTP fetch per watchlist project
   - Per-agent grants (6th permission layer) — scope digest agent's API access to specific `/internal/` endpoints
   - KG sharing is configured separately from workspace sharing — configure KG access independently if needed
   - Channel health diagnostics panel in dashboard — use to verify Telegram connectivity before custom code
   - SSRF re-validation triggers automatically when a provider type is changed
 - Per-user digest: `message` tool with user's Telegram chat ID (stored in Postgres by backend, read
-  by GoClaw agent context or via a custom skill that queries backend API)
-- GoClaw shares Postgres with the backend service; schema namespacing required (prefix `gc_` for
-  GoClaw tables vs `app_` for application tables)
-- LLM provider configured via `GOCLAW_ANTHROPIC_API_KEY` env var; model set per-agent in AGENT.md
-- GoClaw's built-in Telegram channel handles bot token + webhook; set `GOCLAW_TELEGRAM_BOT_TOKEN`
+  by Agent Gateway agent context or via a custom skill that queries backend API)
+- The Agent Gateway shares Postgres with the backend service; schema namespacing required (prefix `gc_` for
+  gateway tables vs `app_` for application tables)
+- LLM provider configured via `AGENT_GATEWAY_ANTHROPIC_API_KEY` env var; model set per-agent in AGENT.md
+- The Agent Gateway's built-in Telegram channel handles bot token + webhook; set `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN`
 
 ### Signal Evaluation
 - 30 s polling loop implemented as a Go ticker in `internal/signals/`; one goroutine per active
@@ -659,8 +658,8 @@ Key findings to carry into implementation:
   - `ALERT_QUEUE` stream: `alert.pending` + `alert.expired`, `LimitsPolicy`, `MaxAge 25h`, `FileStorage`, `Replicas 1`; consumer `alerts-redriver` with `MaxDeliver: 48`, `AckWait: 60s`
   - Both streams initialised explicitly on backend startup via `pkg/nats/` — do NOT rely on NATS auto-create defaults
   - `FileStorage` requires a named Docker volume (`nats-data:/data`) in both local and production compose files
-- Docker compose defines two explicit networks: `public` (Traefik, frontend, backend) and `internal` (backend, ai-service, GoClaw, NATS, Redis, Postgres); ai-service is on `internal` only — never exposed via Traefik
-- On signal fire: publish `signal.triggered.{asset}` to `SIGNALS` stream (subject is asset-keyed; user isolation enforced by `user_id` in payload); `alerts-dispatcher` persists Alert and calls Telegram Bot API directly (not via GoClaw — GoClaw handles digest only; real-time alerts go direct for latency); if user has no linked Telegram, dispatcher sets `telegram_status=Pending` and publishes `alert.pending` to `ALERT_QUEUE`
+- Docker compose defines two explicit networks: `public` (Traefik, frontend, backend) and `internal` (backend, ai-service, Agent Gateway, NATS, Redis, Postgres); ai-service is on `internal` only — never exposed via Traefik
+- On signal fire: publish `signal.triggered.{asset}` to `SIGNALS` stream (subject is asset-keyed; user isolation enforced by `user_id` in payload); `alerts-dispatcher` persists Alert and calls Telegram Bot API directly (not via the Agent Gateway — the gateway handles digest only; real-time alerts go direct for latency); if user has no linked Telegram, dispatcher sets `telegram_status=Pending` and publishes `alert.pending` to `ALERT_QUEUE`
 - **Re-drive pattern (FR-025)**: `alerts-redriver` consumes `alert.pending`; if still unlinked calls `NakWithDelay(backoff)` — NATS redelivers the *same* message (no re-publish, no stream bloat); when `MaxDeliver` is exhausted NATS forwards message to `alert.expired` subject; lightweight DLQ handler sets `telegram_status=Expired`; 24 h expiry enforced by stream `MaxAge` as the authoritative safety net
 - **Circuit breaker on ai-service** (`sony/gobreaker`): the Go evaluator wraps all `POST /indicators/{asset}` and `POST /pct_change/{asset}` calls in a circuit breaker; after 5 consecutive failures (timeout or 5xx), the circuit opens for 30 s — all ai-service calls during this window return immediately with a sentinel error (tick is skipped, logged as warning, no alert fired); after 30 s the circuit half-opens and allows one probe request; if it succeeds, circuit closes and normal evaluation resumes; this prevents cascading timeouts when ai-service is degraded and preserves the 30 s tick budget for non-indicator signals (price threshold via CoinGecko still evaluates normally)
 - **Graceful shutdown**: on `SIGTERM` / `SIGINT` the backend MUST: (1) stop the 30 s evaluation ticker (no new ticks start), (2) drain NATS connections — finish in-flight message ACKs, then close consumers and publisher, (3) close Redis connection pool, (4) close Postgres connection pool, (5) stop HTTP server with `http.Server.Shutdown(ctx)` (deadline = 15 s); log each shutdown step; if any step exceeds deadline, force-close and log warning; this ensures zero-downtime deploys and no lost NATS ACKs
@@ -708,9 +707,9 @@ Key findings to carry into implementation:
 
 **Why Python owns news enrichment:**
 - `vaderSentiment` for headline sentiment scoring is 3 lines in Python
-- Deduplication (URL hash + title fuzzy-match) prevents GoClaw LLM from wasting tokens on repeated headlines
+- Deduplication (URL hash + title fuzzy-match) prevents the Agent Gateway LLM from wasting tokens on repeated headlines
 - `POST /enrich/news` input: `list[NewsItem]` → output: `list[EnrichedNewsItem]` with `sentiment_score`, `is_duplicate` flag
-- GoClaw receives already-enriched, deduplicated items — LLM prompt is shorter, output quality is higher
+- The Agent Gateway receives already-enriched, deduplicated items — LLM prompt is shorter, output quality is higher
 
 **Indicator cache design:**
 - **Indicator cache** (RSI, volume spike, MACD, Bollinger, price stats): Redis key `indicators:{asset}:{candle_minutes}:{YYYY-MM-DD-HH-MM}` rounded to nearest 25 s, TTL = 25 s; different `candle_minutes` values produce separate cache entries; cached response: `{ rsi, volume_spike_ratio, macd_line, macd_signal, macd_histogram, bb_upper, bb_mid, bb_lower, price_stats, quote_currency }`; a single cache entry serves RSI, volume-spike, MACD, and Bollinger rules sharing the same asset + candle size; price-denominated fields (`bb_upper`, `bb_mid`, `bb_lower`, `price_stats.*`) are in the asset's `quote_currency`
@@ -731,9 +730,9 @@ Key findings to carry into implementation:
 
 ### Crypto News API
 - **Selected for POC**: CryptoPanic free tier (50 req/day per token, returns news by currency filter)
-- GoClaw digest agent calls `web_fetch` with CryptoPanic API endpoint per watchlist project,
+- Agent Gateway digest agent calls HTTP fetch with CryptoPanic API endpoint per watchlist project,
   passes results to Anthropic claude-3-5-haiku for summarisation (≤ 200 tokens per project)
-- Fallback: if CryptoPanic quota exceeded, GoClaw uses `web_search` (DuckDuckGo) as fallback
+- Fallback: if CryptoPanic quota exceeded, the Agent Gateway uses web search (DuckDuckGo) as fallback
 
 ### Supabase Auth
 - Supabase Auth handles JWT issuance; Go backend validates JWTs using Supabase public key

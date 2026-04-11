@@ -278,7 +278,7 @@ strategy — without any notification or digest feature needing to be present.
 - **FR-012**: The system MUST send a consolidated daily Telegram digest to each user who has at
   least one project on their watchlist.
 - **FR-013**: The digest MUST be delivered before 09:00 UTC (defaulting to UTC+0 if the user
-  has not set a timezone). For the POC, the GoClaw cron runs at a single fixed time (08:30 UTC);
+  has not set a timezone). For the POC, the Agent Gateway cron runs at a single fixed time (08:30 UTC);
   per-user timezone-aware scheduling is deferred to post-POC. Users in timezones west of UTC
   may receive the digest before their local 09:00; users east of UTC will receive it after.
 - **FR-014**: Each digest MUST contain a section per watchlisted project covering: notable news
@@ -412,11 +412,11 @@ strategy — without any notification or digest feature needing to be present.
   profile when assets are served via Cloudflare CDN.
 - **NFR-PERF-003**: The signal evaluation loop MUST process all active strategies within each 30 s
   tick with peak memory consumption not exceeding 256 MB.
-- **NFR-PERF-004**: The GoClaw digest agent MUST complete per-user digest generation and delivery
+- **NFR-PERF-004**: The Agent Gateway digest agent MUST complete per-user digest generation and delivery
   within 5 minutes of the scheduled cron trigger; peak memory consumption MUST NOT exceed 512 MB.
   Throughput SLA: the pipeline MUST complete all digests for ≤ 50 users × ≤ 10 watchlist projects
-  each within the 5-minute window. GoClaw is a third-party binary; measurement MUST use GoClaw's
-  built-in OTLP traces and Prometheus metrics (LLM call duration, `message` tool latency) rather
+  each within the 5-minute window. The Agent Gateway is a third-party binary; measurement MUST use its
+  built-in OTLP traces and Prometheus metrics (LLM call duration, message tool latency) rather
   than Go pprof. Memory is measured via container runtime metrics (`docker stats` or cAdvisor)
   during Phase 10 performance validation.
 - **NFR-PERF-005**: Performance regressions exceeding 10% against the established baseline MUST
@@ -469,8 +469,8 @@ strategy — without any notification or digest feature needing to be present.
   selected at planning. Data acquisition implementation is out of scope for this spec.
 - **A-002**: A **single** Telegram bot is registered and operational; bot setup is a deployment
   prerequisite, not a feature to be built. The same bot token is used by Go backend (real-time
-  alerts + account linking webhook) and GoClaw (daily digest delivery via `sendMessage`).
-  Telegram delivers all inbound updates to Go backend's webhook endpoint; GoClaw only sends
+  alerts + account linking webhook) and the Agent Gateway (daily digest delivery via `sendMessage`).
+  Telegram delivers all inbound updates to Go backend's webhook endpoint; the Agent Gateway only sends
   outbound messages.
 - **A-003**: "Projects" available for the watchlist are limited to a curated list maintained by
   the team for the POC; a full asset search/discovery flow is out of scope.
@@ -483,7 +483,7 @@ strategy — without any notification or digest feature needing to be present.
   CryptoPanic (free tier, 50 req/day per token) with DuckDuckGo as a fallback on quota
   exhaustion. Provider selection is confirmed in `plan.md` Research Notes.
 - **A-007**: An LLM API is available for digest summarisation; the provider confirmed at
-  planning is **Anthropic claude-3-5-haiku** via GoClaw provider config. LLM call costs are
+  planning is **Anthropic claude-3-5-haiku** via Agent Gateway provider config. LLM call costs are
   acceptable within POC budget constraints.
 - **A-008**: Alert records, digest records, and raw news items are retained indefinitely during
   the POC evaluation period; no automated purge or archival policy is implemented at this stage.

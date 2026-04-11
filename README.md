@@ -43,7 +43,7 @@ Investment Intel AI Agents is a POC platform that lets users configure **rule-ba
                                       │                  │  • News + VADER  │
                                       │                  └──────────────────┘
                                ┌──────────────┐
-                               │   GoClaw     │  Cron 08:30 UTC
+                               │Agent Gateway │  Cron 08:30 UTC
                                │  (Digest     │ ──→ Fetch news
                                │   Agent)     │ ──→ LLM summarise
                                │              │ ──→ Telegram digest
@@ -56,7 +56,7 @@ Investment Intel AI Agents is a POC platform that lets users configure **rule-ba
 |---------|------|----------|
 | **Go Backend** | REST API, auth, signal evaluation, alert dispatch, Telegram linking, billing | Call LLM, compute indicators, run digest |
 | **Python ai-service** | Technical indicators (pandas-ta), news fetching, sentiment scoring | Evaluate thresholds, send Telegram, touch NATS |
-| **GoClaw** | Digest orchestration, LLM summarisation (Claude), digest Telegram delivery | Connect to NATS, dispatch real-time alerts |
+| **Agent Gateway** | Digest orchestration, LLM summarisation (Claude), digest Telegram delivery | Connect to NATS, dispatch real-time alerts |
 | **React SPA** | All user-facing UI, config forms, history views | Call APIs directly, store secrets |
 
 ---
@@ -67,7 +67,7 @@ Investment Intel AI Agents is a POC platform that lets users configure **rule-ba
 |-------|------------|
 | **Backend API** | Go 1.24+, Chi router, zerolog |
 | **AI / Data Service** | Python 3.12+, FastAPI, pandas-ta, vaderSentiment, structlog |
-| **Agent Gateway** | GoClaw v1.74+ (digest cron, LLM, Telegram channel) |
+| **Agent Gateway** | Pluggable — GoClaw v1.74+ (default), OpenClaw, PicoClaw, nanoBot, ZeroClaw |
 | **Frontend** | React 19, Vite, TailwindCSS v4, TanStack Router + Query, Storybook 8 |
 | **Auth** | Supabase (PostgreSQL + Auth + RLS) |
 | **Database** | PostgreSQL 18 + pgvector |
@@ -77,12 +77,12 @@ Investment Intel AI Agents is a POC platform that lets users configure **rule-ba
 | **Billing** | Stripe SDK |
 | **Market Data** | CoinGecko (spot price), CryptoCompare (OHLCV histominute) |
 | **News** | CryptoPanic (primary), DuckDuckGo (fallback) |
-| **LLM** | Anthropic Claude 3.5 Haiku (via GoClaw) |
-| **Monitoring** | Prometheus + Grafana, GoClaw OTLP traces |
+| **LLM** | Anthropic Claude 3.5 Haiku (via Agent Gateway) |
+| **Monitoring** | Prometheus + Grafana, Agent Gateway OTLP traces |
 | **CI** | GitHub Actions |
 | **Deployment** | DigitalOcean Droplets + Cloudflare DNS/CDN/WAF |
 | **Spec Workflow** | [Speckit](https://github.com/nextlevelbuilder/speckit) v0.3.1 (Spec-Driven Development) |
-| **Agent Gateway** | [GoClaw](https://github.com/nextlevelbuilder/goclaw) v1.74+ (AI agent orchestration) |
+| **Agent Gateway** | Pluggable (see [Agent Gateway Abstraction](specs/001-investment-intel-poc/agent-gateway-abstraction.md)) — default: [GoClaw](https://github.com/nextlevelbuilder/goclaw) v1.74+ |
 
 ---
 
@@ -131,8 +131,12 @@ investment-intel-agents/
 │   │   └── projects/                 # DB-backed project registry
 │   └── tests/
 │
-├── goclaw/                           # GoClaw agent configuration
-│   └── agents/digest-agent/          # Daily digest agent + skills
+├── agent-gateway/                     # Pluggable agent gateway (see agent-gateway-abstraction.md)
+│   ├── goclaw/                       # GoClaw config (default)
+│   ├── openclaw/                     # OpenClaw config
+│   ├── picoclaw/                     # PicoClaw config
+│   ├── nanobot/                      # nanoBot config
+│   └── zeroclaw/                     # ZeroClaw config
 │
 ├── frontend/                         # React SPA
 │   ├── src/
@@ -190,7 +194,7 @@ investment-intel-agents/
 - **Supabase** project (PostgreSQL + Auth)
 - **Stripe** account (test mode) with webhook signing secret
 - **CryptoPanic** API token (free tier)
-- **Anthropic** API key (for GoClaw LLM calls)
+- **Anthropic** API key (for Agent Gateway LLM calls)
 
 ### Local Development Setup
 
@@ -212,7 +216,7 @@ docker compose exec backend migrate -path /migrations -database "$DATABASE_URL" 
 # 5. Verify services are healthy
 curl http://localhost:8080/health        # Go backend
 curl http://localhost:8000/health        # Python ai-service
-curl http://localhost:18790              # GoClaw dashboard
+curl http://localhost:18790              # Agent Gateway dashboard
 ```
 
 ### Service URLs (Local Dev)
@@ -222,7 +226,7 @@ curl http://localhost:18790              # GoClaw dashboard
 | React SPA | `http://localhost:5173` |
 | Go Backend API | `http://localhost:8080/api/v1/` |
 | Python ai-service | `http://localhost:8000` (internal only) |
-| GoClaw Dashboard | `http://localhost:18790` |
+| Agent Gateway Dashboard | `http://localhost:18790` |
 | Traefik Dashboard | `http://localhost:8090` |
 | Prometheus | `http://localhost:9090` |
 | Grafana | `http://localhost:3000` |
@@ -255,11 +259,11 @@ All secrets and environment-specific values are set via `.env`:
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
 | `SUPABASE_JWT_SECRET` | JWT verification secret |
-| `TELEGRAM_BOT_TOKEN` | Single Telegram bot token (shared by backend + GoClaw) |
+| `TELEGRAM_BOT_TOKEN` | Single Telegram bot token (shared by backend + Agent Gateway) |
 | `STRIPE_SECRET_KEY` | Stripe API secret key |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
 | `CRYPTOPANIC_TOKEN` | CryptoPanic API token |
-| `GOCLAW_ANTHROPIC_API_KEY` | Anthropic API key for GoClaw LLM |
+| `AGENT_GATEWAY_LLM_API_KEY` | Anthropic API key for Agent Gateway LLM |
 | `DATABASE_URL` | PostgreSQL connection string |
 | `REDIS_URL` | Redis connection string |
 | `NATS_URL` | NATS server URL |
@@ -310,7 +314,7 @@ The local and production Docker Compose files define two explicit networks for s
 | Network | Services | Purpose |
 |---------|----------|---------|
 | `public` | Traefik, frontend, backend | Internet-facing |
-| `internal` | backend, ai-service, GoClaw, NATS, Redis, Postgres | Internal only — ai-service is **never** exposed via Traefik |
+| `internal` | backend, ai-service, Agent Gateway, NATS, Redis, Postgres | Internal only — ai-service is **never** exposed via Traefik |
 
 ---
 
@@ -326,7 +330,7 @@ The project is planned across **11 phases** with **110 tasks**:
 | 4 — Telegram Linking (P1) | Self-service Telegram account connection | Deep-link flow, broken-link detection |
 | 5 — Notifications (P2) | Real-time signal alerts via Telegram | 30s polling, NATS fanout, < 60s delivery SLA |
 | 6 — Alert History (P2) | Read-only alert audit trail | Paginated history, strategy filter, status badges |
-| 7 — Watchlist & Digest (P3) | Watchlist + GoClaw daily digest | CryptoPanic integration, Claude summarisation, 08:30 UTC cron |
+| 7 — Watchlist & Digest (P3) | Watchlist + Agent Gateway daily digest | CryptoPanic integration, Claude summarisation, 08:30 UTC cron |
 | 8 — Billing | Stripe subscription management | Checkout, webhooks, subscription gating |
 | 9 — Admin | User management panel | Admin middleware, user list, subscription overrides |
 | 10 — Quality Gates | Observability, performance, CI gates | Prometheus, Grafana, Playwright E2E, Lighthouse, k6 |
@@ -346,7 +350,7 @@ See [tasks.md](specs/001-investment-intel-poc/tasks.md) for the complete task li
 | React SPA CLS | ≤ 0.1 |
 | Daily digest delivery | Before 09:00 UTC, 100% of days |
 | Signal evaluator memory | ≤ 256 MB peak |
-| GoClaw digest pipeline | ≤ 5 min for 50 users × 10 projects |
+| Agent Gateway digest pipeline | ≤ 5 min for 50 users × 10 projects |
 
 ---
 
@@ -376,14 +380,14 @@ This project is governed by a [constitution](.specify/memory/constitution.md) wi
 | **Rule-based signals** (no ML) | Deterministic, auditable, and debuggable — ML deferred to post-POC |
 | **Go for signal evaluator** | Latency-critical 30s tick; strongly-typed; low memory overhead |
 | **Python for indicators** | pandas-ta computes RSI/MACD/Bollinger in one line; no hand-rolled math |
-| **GoClaw for digest** | Built-in cron, LLM provider, Telegram channel — replaces bespoke orchestration |
-| **Single Telegram bot** | One bot shared between Go (alerts, linking) and GoClaw (digest); Go owns webhook |
+| **Pluggable Agent Gateway** | Built-in cron, LLM provider, Telegram channel — replaces bespoke orchestration; GoClaw default, swappable to OpenClaw / PicoClaw / nanoBot / ZeroClaw |
+| **Single Telegram bot** | One bot shared between Go (alerts, linking) and Agent Gateway (digest); Go owns webhook |
 | **YAML seed config** | Version-controlled, diff-friendly, reviewable — DB stores user data, seed stores shape |
 | **SDF with JSON Schema** | Machine-validatable, LLM-friendly, extensible via `oneOf` discriminated union |
 | **NATS JetStream** | At-least-once delivery with durable consumers; `NakWithDelay` for re-drive (no re-publish) |
 | **Two Docker networks** | ai-service isolated on `internal` only — never exposed to public internet |
 | **Speckit for SDD** | AI-assisted spec workflow ensures spec → plan → tasks → code traceability; constitution enforces quality gates |
-| **GoClaw over bespoke orchestration** | Single binary with cron, LLM, Telegram, and agent tools built in — no custom Python scheduler needed |
+| **Agent Gateway over bespoke orchestration** | Single binary/container with cron, LLM, Telegram, and agent tools built in — no custom Python scheduler needed |
 
 ---
 
@@ -406,23 +410,36 @@ Additional commands: `/speckit.analyze` (cross-artifact consistency checks), `/s
 
 All spec artifacts live in `specs/001-investment-intel-poc/`; project memory and templates in `.specify/`.
 
-### GoClaw — AI Agent Gateway
+### Agent Gateway — Pluggable AI Agent Framework
 
-[GoClaw](https://github.com/nextlevelbuilder/goclaw) (`v1.74+`) is a Go-based AI agent gateway that handles the **daily digest pipeline** — replacing bespoke Python orchestration with built-in tools:
+The project uses a **pluggable Agent Gateway** for the daily digest pipeline. The gateway is responsible for cron scheduling, LLM summarisation, and Telegram delivery. It communicates with other services via HTTPS REST only.
 
-| GoClaw Feature | Usage in This Project |
-|----------------|----------------------|
+**Default: [GoClaw](https://github.com/nextlevelbuilder/goclaw) v1.74+** — chosen for its low footprint, native OTLP, and Markdown-based config.
+
+**Supported alternatives:**
+
+| Framework | Language | Repo | Key Differentiator |
+|-----------|----------|------|--------------------|
+| [GoClaw](https://github.com/nextlevelbuilder/goclaw) (default) | Go | `nextlevelbuilder/goclaw` | ~35 MB RAM, Markdown config, native OTLP |
+| [OpenClaw](https://github.com/openclaw/openclaw) | TypeScript | `openclaw/openclaw` | Largest ecosystem (354k★), multi-channel inbox |
+| [PicoClaw](https://github.com/sipeed/picoclaw) | Go | `sipeed/picoclaw` | Ultra-lightweight (~10 MB RAM), hardware support |
+| [nanoBot](https://github.com/HKUDS/nanobot) | Python | `HKUDS/nanobot` | Python SDK, ultra-light implementation |
+| [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | Rust | `zeroclaw-labs/zeroclaw` | ~5 MB RAM, trait-based architecture, hardware peripherals |
+
+| Required Capability | Usage in This Project |
+|---------------------|----------------------|
 | **Cron scheduling** | Daily digest trigger at 08:30 UTC |
-| **`web_fetch` tool** | Fetches news from CryptoPanic per watchlist project |
+| **HTTP / web_fetch** | Fetches news from CryptoPanic per watchlist project |
 | **LLM provider** (Anthropic) | Summarises news via Claude 3.5 Haiku (≤ 200 tokens/project) |
 | **Telegram channel** | Delivers digest messages (shares single bot with Go backend) |
-| **`message` tool** | Sends formatted digest to each user's Telegram chat |
-| **Subagent `waitAll`** | Parallel news fetch across watchlist projects with auto-retry |
-| **Per-agent grants** | Scopes digest agent API access to `/internal/` endpoints only |
-| **OTLP observability** | LLM call tracing → Prometheus/Grafana |
+| **Subagent / parallel** | Parallel news fetch across watchlist projects with auto-retry |
+| **Scoped permissions** | Scopes digest agent API access to `/internal/` endpoints only |
+| **OTLP / observability** | LLM call tracing → Prometheus/Grafana |
 | **Web dashboard** | Agent management at `http://localhost:18790` |
 
-GoClaw runs as a **single Docker container** (~25 MB binary, ~35 MB RAM idle) with the web UI embedded. It shares Postgres and Redis with the backend but does **not** connect to NATS — all real-time event flow is Go-backend-owned.
+The gateway runs as a **single Docker container** and shares Postgres and Redis with the backend but does **not** connect to NATS — all real-time event flow is Go-backend-owned.
+
+See [Agent Gateway Abstraction](specs/001-investment-intel-poc/agent-gateway-abstraction.md) for the full interface contract, switching guide, and framework comparison.
 
 ---
 
@@ -456,6 +473,8 @@ GoClaw runs as a **single Docker container** (~25 MB binary, ~35 MB RAM idle) wi
 
 This project is licensed under the [MIT License](LICENSE).
 
-> **Third-party notice:** [GoClaw](https://github.com/nextlevelbuilder/goclaw) is
-> **not** covered by this license — it is distributed under its own terms. See the
-> [LICENSE](LICENSE) file for details.
+> **Third-party notice:** Agent gateway frameworks ([GoClaw](https://github.com/nextlevelbuilder/goclaw),
+> [OpenClaw](https://github.com/openclaw/openclaw), [PicoClaw](https://github.com/sipeed/picoclaw),
+> [nanoBot](https://github.com/HKUDS/nanobot), [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw))
+> are **not** covered by this license — each is distributed under its own terms.
+> See the [LICENSE](LICENSE) file for details.
