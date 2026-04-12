@@ -625,9 +625,10 @@ strategy — without any notification or digest feature needing to be present.
 - **FR-049**: Each trade order MUST be persisted in `app_trade_orders` with fields: `id`,
   `user_id`, `strategy_id`, `signal_rule_id`, `alert_id` (FK to the triggering alert), `mode`
   (paper/live), `side` (buy/sell), `asset`, `quantity`, `fill_price`, `quote_amount`,
-  `exchange_order_id` (nullable, only for live), `status` (enum: Pending, Filled,
-  PartiallyFilled, Cancelled, Failed), `error_reason` (nullable), `created_at`, `filled_at`.
-  RLS MUST scope to `user_id`.
+  `exchange_order_id` (nullable, only for live CEX), `tx_hash` (nullable — reserved for future
+  DEX on-chain trades), `chain_id` (nullable INTEGER — reserved for future multi-chain DEX
+  trades; NULL for CEX), `status` (enum: Pending, Filled, PartiallyFilled, Cancelled, Failed),
+  `error_reason` (nullable), `created_at`, `filled_at`. RLS MUST scope to `user_id`.
 - **FR-050**: The signal evaluation cooldown (FR-008) MUST also apply to trade execution:
   only the first signal within the cooldown window produces a trade; subsequent signals within
   the window fire alerts but do NOT place additional orders.
@@ -709,8 +710,11 @@ strategy — without any notification or digest feature needing to be present.
   strategy's quote currency. Debited on buys, credited on sells. The system enforces this
   ceiling before placing any trade. Users may adjust the allocation at any time.
 - **Exchange Link**: A record associating a user with an external exchange account (Binance Spot
-  for POC). Stores the encrypted API key and secret (AES-256-GCM), connection status (active/
-  broken), and the exchange identifier. Used exclusively for live-mode trade execution.
+  for POC). Stores the encrypted API key and secret (AES-256-GCM, nullable for future DEX
+  wallets), connection type (`api_key` for CEX, future: `wallet_connect`, `injected_wallet`),
+  optional wallet address, connection status (active/broken), and the exchange identifier.
+  Uniquely constrained per `(user_id, exchange)` to allow one CEX link + one DEX link per user
+  in future. Used exclusively for live-mode trade execution.
 
 ---
 
@@ -890,8 +894,15 @@ strategy — without any notification or digest feature needing to be present.
   simulation, slippage modelling, or maker/taker fee simulation is implemented for POC. This
   means paper trading results will differ from live trading results.
 - **A-011**: For POC, only **Binance Spot** is supported as an exchange. The exchange adapter
-  is implemented behind a provider interface (`ExchangeAdapter`) so that Coinbase, Kraken,
-  Bybit, and other exchanges can be added post-POC without architectural changes.
+  is implemented behind a provider interface (`ExchangeAdapter`) so that additional centralized
+  exchanges (Coinbase, Kraken, Bybit) **and decentralized exchanges (Uniswap, PancakeSwap,
+  Jupiter)** can be added post-POC without architectural changes. The adapter interface includes
+  `Capabilities()` flags (e.g., `IsAsyncSettlement`, `SupportsWalletConnect`,
+  `RequiresApproval`) that allow the trade executor to branch on exchange type rather than
+  hardcoded exchange names. DEX-specific concerns (wallet connection, on-chain tx confirmation,
+  gas estimation, token approvals) are **out of scope for POC** but the interface, schema, and
+  data model include nullable extension points (`chain_id`, `tx_hash`, `connection_type`,
+  `wallet_address`) to avoid breaking changes when DEX support is added.
 - **A-012**: Users are responsible for managing their own exchange API key permissions. The
   system documents the minimum required permissions (Spot trading read/write) but does NOT
   validate key permissions at link time beyond a test connectivity check.
@@ -928,6 +939,6 @@ strategy — without any notification or digest feature needing to be present.
 | **Trade Order** | A record of a trade placed (or attempted) when a signal fires on a trade-execution-enabled strategy. Carries mode (paper/live), side (buy/sell), quantity, fill price, status (Pending/Filled/PartiallyFilled/Cancelled/Failed), and links to the originating alert, strategy, and signal rule. |
 | **Portfolio Position** | An aggregate record of a user's holdings in a specific asset under a specific strategy and mode. Tracks quantity, average entry price, unrealised P&L (from current market price), and realised P&L. Updated on every trade fill. |
 | **Budget Allocation** | A per-strategy capital ceiling defined by the user, denominated in the strategy's quote currency. The system enforces this ceiling before placing any trade. Debited on buys, credited on sells (realised P&L). Adjustable at any time. |
-| **Exchange Link** | A record associating a user with an external exchange account. Stores encrypted API credentials (AES-256-GCM), connection status, and exchange identifier. Used exclusively for live-mode trade execution. Binance Spot only for POC. |
-| **Exchange Adapter** | A provider-interface implementation that encapsulates all interaction with a specific exchange's API. Follows the same provider-abstraction pattern as market data and news adapters. Binance adapter is the sole POC implementation. |
+- **Exchange Link**: A record associating a user with an external exchange account. Stores encrypted API credentials (AES-256-GCM, nullable for DEX wallets), connection type (`api_key` for CEX, future: `wallet_connect`, `injected_wallet`), optional wallet address, connection status, and exchange identifier. Uniquely constrained per `(user_id, exchange)` to allow one CEX link + one DEX link per user in future. Used exclusively for live-mode trade execution. Binance Spot only for POC. |
+| **Exchange Adapter** | A provider-interface implementation that encapsulates all interaction with a specific exchange's API. Exposes `Capabilities()` flags (`IsAsyncSettlement`, `SupportsWalletConnect`, `RequiresApproval`, `ConnectionType`) so the trade executor branches on capability rather than exchange name. Follows the same provider-abstraction pattern as market data and news adapters. Binance adapter is the sole POC implementation; the interface shape supports both CEX and DEX adapters post-POC. |
 | **Fill Price** | The price at which a trade order is executed. For paper trades, this is the last traded price from the market data feed at signal-fire time. For live trades, this is the actual execution price reported by the exchange. |

@@ -203,7 +203,7 @@ A single authoritative reference for which service owns each concern. When in do
 | Market sentiment pulse skill | **Agent Gateway** | **Domain** | Investment-specific skill in `agents/sentiment-agent/`; cron-scheduled (default every 4 h); fetches top N news items via ai-service, classifies sentiment via LLM, stores score via backend `/internal/sentiment` endpoint, optionally sends Telegram push |
 | **Trade execution (paper + live)** | **Go backend** | **Domain** | Investment-specific: on signal fire for trade-enabled strategy, executes paper trade (local computation) or live trade (exchange adapter API call); publishes `trade.executed.{asset}` to NATS; non-blocking relative to alert delivery |
 | **Portfolio position tracking** | **Go backend** | **Domain** | Investment-specific: maintains aggregate positions per strategy per mode; updates on every trade fill; provides portfolio dashboard data via REST API |
-| **Exchange API calls (Binance Spot)** | **Go backend** | **Domain** | Investment-specific: `domain/investment/exchange/interfaces.go` defines `ExchangeAdapter`; `domain/investment/exchange/binance/` implements it for POC; swap to Coinbase/Kraken/Bybit by adding a new adapter dir — trade executor unchanged |
+| **Exchange API calls (Binance Spot)** | **Go backend** | **Domain** | Investment-specific: `domain/investment/exchange/interfaces.go` defines `ExchangeAdapter` + `ExchangeCapabilities`; `domain/investment/exchange/binance/` implements it for POC; swap to Coinbase/Kraken/Bybit (CEX) or Uniswap/PancakeSwap/Jupiter (DEX) by adding a new adapter dir — trade executor branches on `Capabilities()` flags, not exchange names |
 | **Exchange credential management** | **Go backend** | **Domain** | Investment-specific: AES-256-GCM encryption/decryption of exchange API keys; credentials stored in `app_exchange_links`; decrypted only in-memory at point of use |
 | **Budget enforcement** | **Go backend** | **Domain** | Investment-specific: validates per-strategy budget allocation before placing any trade; debits on buy, credits on sell (realised P&L) |
 | **Portfolio dashboard page** | **React SPA** | **Domain** | Investment-specific UI: positions, P&L, trade history, budget utilisation; paper/live mode separation |
@@ -385,7 +385,7 @@ Trade execution is an **optional branch** on the signal-fire path: when a signal
    - Checks `execution_mode = live` and user has connected exchange (`app_exchange_links.status = active`)
    - Validates budget (same as paper)
    - Decrypts exchange API credentials from `app_exchange_links` (AES-256-GCM, `EXCHANGE_ENCRYPTION_KEY` env var) — credentials exist only in-memory during the API call
-   - Places **market order** on Binance Spot via the `ExchangeAdapter` interface (10 s deadline per NFR-PERF-008)
+   - Places **market order** on Binance Spot via `ExchangeAdapter.PlaceOrder()` (10 s deadline per NFR-PERF-008); executor checks `adapter.Capabilities().IsAsyncSettlement` — `false` for CEX (synchronous fill), future DEX adapters return `true` (pending tx hash, confirmed asynchronously)
    - On success: persists trade in `app_trade_orders` with `mode=live`, `exchange_order_id`, `fill_price` (actual execution price from exchange), `status=Filled`
    - On failure (timeout, API error): persists trade with `status=Failed`, `error_reason`; alert still delivered with failure reason: "⚠️ Live Trade Failed: Binance API timeout"
    - Updates portfolio position and publishes `trade.executed.{asset}` to NATS
@@ -396,19 +396,36 @@ Trade execution is an **optional branch** on the signal-fire path: when a signal
 ```go
 // domain/investment/exchange/interfaces.go
 type ExchangeAdapter interface {
-    PlaceMarketOrder(ctx context.Context, req MarketOrderRequest) (*OrderResult, error)
+    PlaceOrder(ctx context.Context, req OrderRequest) (*OrderResult, error)
     TestConnectivity(ctx context.Context) error
-    Name() string // e.g., "binance"
+    Name() string               // e.g., "binance", "uniswap"
+    Capabilities() ExchangeCapabilities
 }
 
-type MarketOrderRequest struct {
+// ExchangeCapabilities — capability flags queried by trade executor to branch
+// on exchange type without hardcoding exchange names. POC: Binance returns
+// {false, false, false, "api_key"}. Future DEX adapters return {true, true, true, "wallet_connect"}.
+type ExchangeCapabilities struct {
+    IsAsyncSettlement   bool   // false for CEX (instant fill), true for DEX (on-chain confirmation)
+    SupportsWalletConnect bool  // false for CEX (API key), true for DEX
+    RequiresApproval    bool   // false for CEX, true for ERC-20 DEX swaps
+    ConnectionType      string // "api_key" | "wallet_connect" | "injected_wallet"
+}
+
+type OrderRequest struct {
     Symbol   string          // e.g., "BTCUSDT"
     Side     OrderSide       // Buy or Sell
     Quantity decimal.Decimal  // asset quantity
+    // DEX-ready extension points (nullable, ignored by CEX adapters for POC):
+    // ChainID        *int64          // e.g., 1 (Ethereum), 56 (BSC)
+    // SlippageBps    *int            // e.g., 50 = 0.5%
+    // InputTokenAddr *string         // ERC-20 contract address
+    // OutputTokenAddr *string        // ERC-20 contract address
 }
 
 type OrderResult struct {
-    ExchangeOrderID string
+    ExchangeOrderID string          // CEX order ID (empty for DEX)
+    TxHash          string          // DEX transaction hash (empty for CEX)
     FillPrice       decimal.Decimal
     FilledQuantity  decimal.Decimal
     Status          string
@@ -416,7 +433,7 @@ type OrderResult struct {
 }
 ```
 
-POC implements `exchange/binance/client.go` using Binance Spot REST API. Post-POC: add `exchange/coinbase/`, `exchange/kraken/`, etc. — trade executor unchanged.
+POC implements `exchange/binance/client.go` using Binance Spot REST API. Post-POC: add `exchange/coinbase/`, `exchange/kraken/` (CEX), or `exchange/uniswap/`, `exchange/pancakeswap/` (DEX) — trade executor branches on `Capabilities()` flags, not exchange names.
 
 **Exchange credential encryption** (AES-256-GCM):
 - Server-side key derived from `EXCHANGE_ENCRYPTION_KEY` env var (never stored in DB or code)
@@ -445,9 +462,9 @@ POC implements `exchange/binance/client.go` using Binance Spot REST API. Post-PO
 
 **Database changes**:
 - New table `app_trading_accounts` (migration `009_trading.sql`)
-- New table `app_trade_orders` (migration `009_trading.sql`)
+- New table `app_trade_orders` (migration `009_trading.sql`) — includes nullable `tx_hash VARCHAR` and `chain_id INTEGER` columns (DEX-ready extension points; NULL for all CEX trades)
 - New table `app_portfolio_positions` (migration `009_trading.sql`)
-- New table `app_exchange_links` (migration `009a_exchange_links.sql`)
+- New table `app_exchange_links` (migration `009a_exchange_links.sql`) — unique constraint on `(user_id, exchange)` (not just `user_id`) to allow one link per exchange type in future; includes `connection_type VARCHAR NOT NULL DEFAULT 'api_key'` (future: `wallet_connect`, `injected_wallet`) and nullable `wallet_address VARCHAR` (DEX-ready); API key columns are `NULLABLE` (DEX wallets have no API keys but constraint enforced at app level for POC)
 - New columns on `app_strategies`: `execution_enabled BOOLEAN DEFAULT FALSE`, `execution_mode` (enum: paper/live), `trade_action` (enum: buy/sell), `trade_size_pct NUMERIC`, `budget_allocation NUMERIC` (migration `009b_strategies_execution.sql`)
 - RLS enabled on all new tables, scoped to `user_id`
 
@@ -557,13 +574,14 @@ investment-intel/
 │   │       │   ├── service.go       # PortfolioService: position updates on trade fill, P&L calc
 │   │       │   └── handler.go       # /portfolio, /portfolio/trades endpoints
 │   │       ├── exchange/            # Exchange adapter (interface + impl) — provider abstraction
-│   │       │   ├── interfaces.go    # ExchangeAdapter, MarketOrderRequest, OrderResult
+│   │       │   ├── interfaces.go    # ExchangeAdapter, ExchangeCapabilities, OrderRequest, OrderResult
 │   │       │   ├── handler.go       # /exchange/connect, /exchange/disconnect, /exchange/status
 │   │       │   ├── crypto.go        # AES-256-GCM encrypt/decrypt helpers for exchange credentials
 │   │       │   └── binance/         # ← SWAPPABLE: Binance Spot (implements ExchangeAdapter)
 │   │       │       ├── client.go    # BinanceAdapter — REST API client for market orders
 │   │       │       └── config.go    # Binance-specific config (base URL, testnet toggle)
-│   │       │       # Future: coinbase/, kraken/, bybit/ — same ExchangeAdapter interface
+│   │       │       # Future CEX: coinbase/, kraken/, bybit/
+│   │       │       # Future DEX: uniswap/, pancakeswap/, jupiter/ — same ExchangeAdapter interface + Capabilities() flags
 │   │       └── config/              # Seed config loader (signal types, project seeds)
 │   │           └── seed.go
 │   │
@@ -1002,7 +1020,7 @@ All indexes are created in the same migration as their parent table. Each index 
 | `app_trade_orders` | `idx_trade_orders_alert_id` | `alert_id` | FK lookup: find trades by originating alert |
 | `app_portfolio_positions` | `idx_positions_user_id` | `user_id` | Portfolio dashboard: `WHERE user_id = $1` |
 | `app_portfolio_positions` | `idx_positions_user_strategy_mode` | `user_id, strategy_id, mode, asset` | **UNIQUE** — one position per user×strategy×mode×asset; upsert target |
-| `app_exchange_links` | `idx_exchange_links_user_id` | `user_id` | **UNIQUE** — one exchange link per user for POC (Binance only) |
+| `app_exchange_links` | `idx_exchange_links_user_exchange` | `user_id, exchange` | **UNIQUE** — one link per exchange per user (POC: only Binance; DEX-ready for one CEX + one DEX link) |
 | `app_trading_accounts` | `idx_trading_accounts_user_id` | `user_id` | **UNIQUE** — one trading account per user |
 | `app_strategies` | `idx_strategies_user_execution` | `user_id, execution_enabled` WHERE `execution_enabled = TRUE` | Trade executor: find strategies with execution enabled for a user |
 
@@ -1291,7 +1309,8 @@ For OTel Collector fan-out, the gateway exports to the collector at `http://otel
 - **Authentication**: HMAC-SHA256 signed requests using user's API key + secret (stored encrypted in `app_exchange_links`)
 - **Rate limits**: 1200 request weight/min for orders; POC scale (≤ 50 users, ≤ 1 trade per signal fire per strategy) is well within limits
 - **Testnet**: `https://testnet.binance.vision` available for integration testing; configure via `BINANCE_BASE_URL` env var (default: `https://api.binance.com`; testnet: `https://testnet.binance.vision`)
-- **Go SDK options**: (a) `adshao/go-binance` — popular community SDK; (b) raw `net/http` with HMAC signing — simpler, fewer dependencies; **POC decision**: raw `net/http` with a thin adapter wrapper — keeps dependency surface minimal; the `ExchangeAdapter` interface is simple enough (one method: `PlaceMarketOrder`) that a full SDK is unnecessary
+- **Go SDK options**: (a) `adshao/go-binance` — popular community SDK; (b) raw `net/http` with HMAC signing — simpler, fewer dependencies; **POC decision**: raw `net/http` with a thin adapter wrapper — keeps dependency surface minimal; the `ExchangeAdapter` interface is simple enough (one method: `PlaceOrder` + `Capabilities()`) that a full SDK is unnecessary
+- **DEX readiness**: The `ExchangeAdapter` interface includes `Capabilities()` flags and the `OrderRequest`/`OrderResult` structs carry nullable DEX extension points (`TxHash`, commented-out `ChainID`/`SlippageBps`/token addresses). The `app_exchange_links` schema uses `UNIQUE(user_id, exchange)` (not just `user_id`) and includes `connection_type` + nullable `wallet_address`. The `app_trade_orders` schema includes nullable `tx_hash` and `chain_id`. These extension points cost zero runtime overhead for the CEX POC but prevent schema migrations and interface-breaking changes when DEX support is added post-POC
 - **Symbol format**: Binance uses concatenated pairs (e.g., `BTCUSDT`, `ETHUSDT`); the adapter maps `{asset_slug, quote_currency}` → Binance symbol (e.g., `btc` + `USD` → `BTCUSDT`); symbol mapping cached in-memory
 - **Order response**: Binance returns `fills` array with `price` and `qty` per fill; for market orders, the adapter computes VWAP (volume-weighted average price) across all fills as the `fill_price`
 - **Minimum order size**: Binance enforces `LOT_SIZE` and `MIN_NOTIONAL` filters per symbol; the adapter MUST fetch exchange info (`GET /api/v3/exchangeInfo?symbol=BTCUSDT`) at startup and cache symbol filters; reject trades below minimum before sending to exchange (clearer error message than Binance's error code)
