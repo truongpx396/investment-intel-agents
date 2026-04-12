@@ -97,6 +97,11 @@ auth, billing, or agent code.
 
 **Logging**: All services output JSON-structured logs to stdout via zerolog (Go), structlog (Python), and pino (Node.js). Log rotation is handled by the Docker daemon log driver (`json-file` with `max-size: 50m`, `max-file: 3`); no application-level rotation is needed.
 
+**CORS Configuration**:
+- Go backend: `CORS_ALLOWED_ORIGINS` env var (production: `https://app.<domain>`; local dev: `http://localhost:5173`); methods: `GET, POST, PUT, PATCH, DELETE, OPTIONS`; headers: `Authorization, Content-Type, X-Request-ID`; credentials: `true` (httpOnly cookie); implemented via `rs/cors` middleware in `platform/server/router.go`
+- ai-service: CORS restricted to internal Docker network only (no public CORS needed); `ALLOWED_HOSTS` env var for host header validation
+- Traefik: does NOT add CORS headers (backend handles CORS directly to avoid double-header issues)
+
 **Target Platform**: DigitalOcean Droplets (Linux/amd64) + Cloudflare DNS/CDN/WAF
 
 **Project Type**: Web service (React SPA + Go microservices + Python AI service + pluggable Agent Gateway)
@@ -114,6 +119,11 @@ auth, billing, or agent code.
 - Stripe integration limited to subscription creation and webhook processing (no custom invoicing)
 
 **Scale/Scope**: ≤ 50 users, 2 signal assets seeded for POC (BTC/ETH; extensible via `app_projects` — no schema migration needed to add tokens), curated watchlist of ~20 projects
+
+**Secrets Management**:
+- POC: all secrets (`EXCHANGE_ENCRYPTION_KEY`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, Stripe keys, Supabase keys, NATS credentials, `AGENT_GATEWAY_INTERNAL_TOKEN`) are loaded from `.env` files or environment variables on DigitalOcean Droplets. `.env` files MUST NOT be committed to Git (`.gitignore` enforced). `.env.example` files MUST contain placeholder values only.
+- Production (post-POC): migrate secrets to a dedicated secrets manager (e.g., HashiCorp Vault, DigitalOcean Managed Secrets, or SOPS-encrypted files in Git). The `EXCHANGE_ENCRYPTION_KEY` is particularly critical — it is the master key for all encrypted exchange credentials; loss or rotation requires re-encryption of all stored credentials. Document the rotation procedure in `specs/001-investment-intel-poc/quickstart.md`.
+- All secrets MUST be at least 32 characters with high entropy. `EXCHANGE_ENCRYPTION_KEY` MUST be exactly 32 bytes (or derived to 32 bytes via HKDF). `AGENT_GATEWAY_INTERNAL_TOKEN` MUST be a cryptographically random string (≥ 48 characters).
 
 ---
 
@@ -180,7 +190,7 @@ A single authoritative reference for which service owns each concern. When in do
 | Generic event pub/sub (NATS JetStream abstracted) | **Go backend** | **Platform** | `platform/eventbus/interfaces.go` defines `Publisher` + `Consumer`; `platform/eventbus/nats/` implements them for POC; swap to Kafka/RabbitMQ by adding a new provider dir — domain code unchanged |
 | User profile (timezone, settings) | **Go backend** | **Platform** | Domain-agnostic user preferences |
 | Admin middleware + user management | **Go backend** | **Platform** | Generic admin operations |
-| Health endpoints (`/health`, `/ready`) | **Go backend** | **Platform** | Infrastructure concern |
+| Health endpoints (`/health`, `/ready`) | **Go backend** | **Platform** | Infrastructure concern; `/ready` checks Postgres, Redis, NATS, and optionally exchange adapter connectivity (degraded but ready if exchange is unreachable) |
 | PostgreSQL migrations | **Go backend** (`migrations/`) | **Both** | Platform migrations (`001-099`, `platform_*` tables); domain migrations (`100-199`, `app_*` tables); Agent Gateway uses `gc_` prefix |
 | Signal evaluation loop (30 s ticker, threshold checks) | **Go backend** | **Domain** | Investment-specific: orchestrates tick, fetches pre-computed indicators, evaluates rules, publishes domain events via platform `EventPublisher` |
 | Market data fetching (CoinGecko, CryptoCompare) | **Go backend** | **Domain** | Investment-specific data sources; domain-owned `DataFeedProvider` implementations |
@@ -202,7 +212,7 @@ A single authoritative reference for which service owns each concern. When in do
 | Anomaly explanation enrichment | **Agent Gateway** | **Domain** | Investment-specific: on signal fire, fetches news + market context via ai-service, invokes LLM to explain the cause, returns explanation text to Go dispatcher for appending to alert; non-blocking (alert delivers without explanation on failure) |
 | Market sentiment pulse skill | **Agent Gateway** | **Domain** | Investment-specific skill in `agents/sentiment-agent/`; cron-scheduled (default every 4 h); fetches top N news items via ai-service, classifies sentiment via LLM, stores score via backend `/internal/sentiment` endpoint, optionally sends Telegram push |
 | **Trade execution (paper + live)** | **Go backend** | **Domain** | Investment-specific: on signal fire for trade-enabled strategy, executes paper trade (local computation) or live trade (exchange adapter API call); publishes `trade.executed.{asset}` to NATS; non-blocking relative to alert delivery |
-| **Portfolio position tracking** | **Go backend** | **Domain** | Investment-specific: maintains aggregate positions per strategy per mode; updates on every trade fill; provides portfolio dashboard data via REST API |
+| **Portfolio position tracking** | **Go backend** | **Domain** | Investment-specific: maintains aggregate positions per strategy per mode; updates on every trade fill; provides portfolio dashboard data via REST API; `GET /portfolio` responses cached in Redis (`portfolio:{user_id}` key, TTL = 15 s) to reduce DB load from TanStack Query 30 s polling; cache invalidated on trade fill |
 | **Exchange API calls (Binance Spot)** | **Go backend** | **Domain** | Investment-specific: `domain/investment/exchange/interfaces.go` defines `ExchangeAdapter` + `ExchangeCapabilities`; `domain/investment/exchange/binance/` implements it for POC; swap to Coinbase/Kraken/Bybit (CEX) or Uniswap/PancakeSwap/Jupiter (DEX) by adding a new adapter dir — trade executor branches on `Capabilities()` flags, not exchange names |
 | **Exchange credential management** | **Go backend** | **Domain** | Investment-specific: AES-256-GCM encryption/decryption of exchange API keys; credentials stored in `app_exchange_links`; decrypted only in-memory at point of use |
 | **Budget enforcement** | **Go backend** | **Domain** | Investment-specific: validates per-strategy budget allocation before placing any trade; debits on buy, credits on sell (realised P&L) |
@@ -453,12 +463,26 @@ POC implements `exchange/binance/client.go` using Binance Spot REST API. Post-PO
 - Unique index on `(signal_rule_id, triggered_at, strategy_id)` in `app_trade_orders`
 - Application-level check before insert + database constraint as safety net
 - Prevents double execution under concurrent processing
+- `triggered_at` MUST be truncated to the nearest second (`date_trunc('second', now())`) before publishing to NATS to prevent timing drift across goroutines from defeating the idempotency guard
+
+**Exchange disconnect concurrency** (FR-047 race handling):
+- The disconnect handler acquires a PostgreSQL advisory lock (`pg_advisory_xact_lock(user_id)`) within the same transaction that deletes credentials and pauses strategies
+- The trade executor checks `exchange_link.status` inside the same advisory lock scope before decrypting credentials; if status is `broken` or link is absent, trade is skipped
+- A per-user `sync.Mutex` in the trade executor prevents concurrent trade execution for the same user; the disconnect handler acquires this mutex (with 10 s timeout) before proceeding, ensuring any in-flight trade completes before credentials are deleted
+- Sequence: disconnect → acquire user mutex (wait for in-flight trade) → acquire advisory lock → pause strategies → delete credentials → release advisory lock → release mutex
 
 **Exchange adapter circuit breaker** (NFR-REL-006):
 - `sony/gobreaker` wrapping all exchange API calls
 - Open after 3 consecutive failures (timeout or 5xx) for 60 s
 - During open window: live trade execution skipped (logged as warning), paper trades still execute
 - Prometheus gauge: `exchange_circuit_breaker_state{exchange="binance"}` (0=closed, 1=half-open, 2=open)
+
+**Proactive exchange health probe**:
+- A background goroutine runs every 5 minutes and calls `TestConnectivity(ctx)` on the exchange adapter for each user with `app_exchange_links.status = 'active'` AND at least one live-mode strategy enabled
+- On auth failure (HTTP 401/403 from exchange): marks `app_exchange_links.status = 'broken'`, pauses all live strategies for that user, sends Telegram notification "⚠️ Exchange credentials invalid — live strategies paused. Please re-link your exchange account.", emits Prometheus counter `exchange_health_probe_failures_total{exchange, reason}`
+- On network failure (timeout, 5xx): does NOT mark as broken (transient); logs warning and retries on next probe cycle
+- On success: if status was previously `broken` (e.g., from a prior probe failure that was later resolved manually), the probe does NOT auto-restore — the user must explicitly re-link (security: prevents auto-activation of potentially compromised credentials)
+- Probe is rate-limited to 1 call per user per 5 min; uses the same circuit breaker as trade execution to avoid hammering a degraded exchange
 
 **Database changes**:
 - New table `app_trading_accounts` (migration `009_trading.sql`)
@@ -473,7 +497,7 @@ POC implements `exchange/binance/client.go` using Binance Spot REST API. Post-PO
 - `DELETE /api/v1/exchange/disconnect` — unlink exchange account (hard-delete credentials, pause live strategies)
 - `GET /api/v1/exchange/status` — connection status (never returns credentials)
 - `PATCH /api/v1/strategies/:id/execution` — enable/disable trade execution, set mode/action/size/budget
-- `GET /api/v1/portfolio` — portfolio dashboard data (positions, P&L, budget utilisation)
+- `GET /api/v1/portfolio` — portfolio dashboard data (positions, P&L, budget utilisation); **cached in Redis** (`portfolio:{user_id}` key, TTL = 15 s) to reduce DB load from TanStack Query 30 s polling; cache invalidated on trade fill via `PortfolioService.UpdatePosition()`
 - `GET /api/v1/portfolio/trades?strategy_id=&mode=` — trade history (paginated, filterable)
 - `PATCH /api/v1/strategies/:id/budget` — adjust budget allocation
 
@@ -734,8 +758,28 @@ investment-intel/
 │   └── strategy-definition.schema.json  # Strategy Definition Format JSON Schema (FR-027)
 │
 └── migrations/                      # PostgreSQL migrations (golang-migrate)
-    ├── 001-099: platform_*          # Platform schema (users, notifications, subscriptions)
-    └── 100-199: app_*               # Domain schema (strategies, alerts, watchlist, projects)
+    # NOTE: Migration numbering uses sequential integers (001, 002, 003...) applied in order.
+    # The platform/domain split is by TABLE PREFIX, not file number:
+    #   - `platform_*` tables: platform concerns (users, notifications, subscriptions)
+    #   - `app_*` tables: domain concerns (strategies, alerts, watchlist, projects)
+    #   - `gc_*` tables: Agent Gateway concerns
+    # Migrations may interleave platform and domain tables in the same numbered file
+    # (e.g., 002_users.sql creates platform_-prefixed tables, 002a_projects.sql creates app_-prefixed).
+    # The authoritative ordering is the numeric prefix; all migrations run in sequence.
+    ├── 001_init.sql                 # Base schema namespaces
+    ├── 002_users.sql                # app_users (platform concern, app_ prefix for historical reasons)
+    ├── 002a_projects.sql            # app_projects (domain reference data)
+    ├── 003_strategies.sql           # app_strategies + app_signal_rules
+    ├── 004_telegram.sql             # Telegram linking columns on app_users
+    ├── 005_alerts.sql               # app_alerts
+    ├── 006_watchlist.sql            # app_watchlist_entries
+    ├── 007_admin.sql                # Admin columns on app_users
+    ├── 008_sentiment.sql            # app_sentiment_scores
+    ├── 008a_users_sentiment.sql     # sentiment_push_enabled on app_users
+    ├── 009_trading.sql              # app_trading_accounts + app_trade_orders + app_portfolio_positions
+    ├── 009a_exchange_links.sql      # app_exchange_links
+    ├── 009b_strategies_execution.sql # Execution columns on app_strategies
+    └── 010_stripe_idempotency.sql   # platform_stripe_events (webhook idempotency)
 ```
 
 **Structure Decision**: Domain-decoupled platform architecture with provider abstraction (backend + AI service + frontend + agent gateway).
@@ -800,28 +844,34 @@ signal_types:
 
   volume_spike:
     display_name: "Volume Spike"
+    # operator is always "above" (locked); threshold is NULL — uses volume_threshold_pct instead
     parameters:
       operator: { type: enum, values: ["above"], required: true }
       volume_threshold_pct: { type: decimal, required: false, default: 200, unit: "percent" }
       candle_minutes: { type: enum, values: [5, 15, 60], required: false, default: 15 }
+    # Note: DB stores operator="above", threshold=NULL for this type
     data_source: cryptocompare_histominute
     compute: ai_service_indicators
     candle_multiplier: 20
 
   macd_crossover:
     display_name: "MACD Crossover"
+    # No operator or threshold — direction-based signal; uses cross_direction instead
     parameters:
       cross_direction: { type: enum, values: ["bullish", "bearish"], required: true }
       candle_minutes: { type: enum, values: [5, 15, 60], required: false, default: 15 }
+    # Note: DB stores operator=NULL, threshold=NULL for this type
     data_source: cryptocompare_histominute
     compute: ai_service_indicators
     candle_multiplier: 35
 
   bollinger_breach:
     display_name: "Bollinger Band Breach"
+    # No operator or threshold — direction-based signal; uses band_direction instead
     parameters:
       band_direction: { type: enum, values: ["upper", "lower"], required: true }
       candle_minutes: { type: enum, values: [5, 15, 60], required: false, default: 15 }
+    # Note: DB stores operator=NULL, threshold=NULL for this type
     data_source: cryptocompare_histominute
     compute: ai_service_indicators
     candle_multiplier: 20
@@ -846,6 +896,129 @@ projects_seed:   # seeded into app_projects on first run (idempotent upsert)
     quote_currency: USD
     is_signal_asset: false   # watchlist only for POC
   # ... remaining ~17 watchlist-only projects
+
+strategy_templates:   # curated templates by investor profile (FR-056); each sdf block is asset-agnostic
+  - slug: conservative_hold_alert
+    display_name: "Conservative — Hold & Alert"
+    description: "Low-risk alerts for significant price drops and oversold conditions. Alert-only — no auto-trading."
+    investor_profile: conservative
+    risk_level: low
+    sdf:
+      name: "Conservative Alert"     # user can rename before saving
+      # asset: supplied by user at creation time
+      rules:
+        - signal_type: price_threshold
+          operator: below
+          threshold: 50000            # placeholder — user should adjust to current support level
+        - signal_type: rsi
+          operator: below
+          threshold: 30
+          candle_minutes: 15
+      # no execution block — alert-only mode
+
+  - slug: moderate_trend_follower
+    display_name: "Moderate — Trend Follower"
+    description: "Balanced trend-following with RSI overbought/oversold and MACD confirmation. Paper trading enabled."
+    investor_profile: moderate
+    risk_level: medium
+    sdf:
+      name: "Trend Follower"
+      rules:
+        - signal_type: rsi
+          operator: above
+          threshold: 70
+          candle_minutes: 15
+        - signal_type: rsi
+          operator: below
+          threshold: 30
+          candle_minutes: 15
+        - signal_type: macd_crossover
+          cross_direction: bullish
+          candle_minutes: 15
+      execution:
+        enabled: true
+        mode: paper
+        action: buy
+        trade_size_pct: 5
+        budget_allocation: 5000
+
+  - slug: aggressive_momentum_breakout
+    display_name: "Aggressive — Momentum Breakout"
+    description: "High-conviction momentum signals: volume spike, MACD, Bollinger breach, and rapid price change. Paper trading at 15% per trade."
+    investor_profile: aggressive
+    risk_level: high
+    sdf:
+      name: "Momentum Breakout"
+      rules:
+        - signal_type: volume_spike
+          operator: above
+          volume_threshold_pct: 300
+          candle_minutes: 15
+        - signal_type: macd_crossover
+          cross_direction: bullish
+          candle_minutes: 60
+        - signal_type: bollinger_breach
+          band_direction: upper
+          candle_minutes: 15
+        - signal_type: pct_change
+          operator: above
+          threshold: 5.0
+          window_minutes: 60
+      execution:
+        enabled: true
+        mode: paper
+        action: buy
+        trade_size_pct: 15
+        budget_allocation: 10000
+
+  - slug: income_dca_on_dip
+    display_name: "Income / DCA — Buy the Dip"
+    description: "Accumulation strategy that triggers on significant 24h drops combined with oversold RSI. Paper trading at 10% per trade."
+    investor_profile: income
+    risk_level: medium
+    sdf:
+      name: "DCA on Dip"
+      rules:
+        - signal_type: pct_change
+          operator: below
+          threshold: -5.0
+          window_minutes: 1440
+        - signal_type: rsi
+          operator: below
+          threshold: 35
+          candle_minutes: 15
+      execution:
+        enabled: true
+        mode: paper
+        action: buy
+        trade_size_pct: 10
+        budget_allocation: 5000
+
+  - slug: growth_multi_signal
+    display_name: "Growth — Multi-Signal Accumulator"
+    description: "Diversified entry signals combining oversold RSI, MACD momentum, and short-term price strength. Paper trading at 8% per trade."
+    investor_profile: growth
+    risk_level: medium
+    sdf:
+      name: "Multi-Signal Accumulator"
+      rules:
+        - signal_type: rsi
+          operator: below
+          threshold: 40
+          candle_minutes: 15
+        - signal_type: macd_crossover
+          cross_direction: bullish
+          candle_minutes: 15
+        - signal_type: pct_change
+          operator: above
+          threshold: 3.0
+          window_minutes: 60
+      execution:
+        enabled: true
+        mode: paper
+        action: buy
+        trade_size_pct: 8
+        budget_allocation: 8000
 ```
 
 ### Design decisions
@@ -855,6 +1028,8 @@ projects_seed:   # seeded into app_projects on first run (idempotent upsert)
 - **No secrets in seed**: environment-specific values (`TELEGRAM_BOT_TOKEN`, API keys, DSNs) remain in `.env` / env vars. The seed file is safe to commit.
 - **Idempotent project seeding**: `projects_seed` entries are upserted into `app_projects` on startup (match by `slug`). This means the seed file is the source of truth for the initial project list, but admin-added projects in the DB are not overwritten.
 - **Extensibility**: to add a new signal type (e.g., `funding_rate`), a developer adds a new entry under `signal_types` in the seed file, updates the JSON Schema, adds the computation logic in ai-service, and the evaluator/validator automatically pick it up — no changes to the strategy CRUD layer or DB schema (the `signal_type` column uses a CHECK constraint derived from the seed file's keys at migration time, or a VARCHAR with application-level validation).
+- **Strategy templates in seed config, not DB**: templates are curated by the development team, version-controlled, and PR-reviewable — exactly like signal type definitions. Storing them in `seed.yaml` avoids the complexity of a template CRUD admin UI, template versioning, and migration scripts. Each template's `sdf` block is validated against the SDF JSON Schema at boot (fail-fast). The `asset` field is intentionally omitted from template SDFs; the user supplies it at creation time. Created strategies have no back-link to their source template — they are fully independent copies. Post-POC extensibility: user-defined "save as template" and team-curated marketplace templates can be layered on top without changing the core flow.
+- **Versioning strategy**: the seed file carries a top-level `version: "1"` field. The Go loader checks this version at startup and rejects seed files with an unsupported version (fail-fast with descriptive error). Breaking changes to the seed schema (removing a field, changing semantics) MUST increment the version. Additive changes (new signal types, new projects, new tunable keys) are backward-compatible and do NOT require a version bump. The JSON Schema (`config/seed.schema.json`) is versioned in lockstep; the `$id` field includes the version (e.g., `seed-config-v1`). This ensures that a config rollback to an older seed file is safe as long as the version matches.
 
 ---
 
@@ -981,6 +1156,21 @@ When `execution.enabled` is `false` or the `execution` key is absent, the strate
 | `PUT /strategies/:id` | Full SDF document (without `id`) | Updated strategy |
 | `POST /strategies/import` | `{ "strategies": [ SDF, SDF, ... ] }` | Array of created strategies with IDs |
 | `GET /strategies/:id/export` | — | Pure SDF document (no server-side metadata except `id`) |
+| `GET /strategy-templates` | — | `{ "templates": [ { slug, display_name, description, investor_profile, risk_level, rules_summary } ] }` — read-only, from seed config |
+
+### Template-based strategy creation flow
+
+Templates provide a guided on-ramp that reuses the existing SDF pipeline:
+
+```
+GET /strategy-templates
+    → User picks profile + asset
+    → Frontend merges template SDF + chosen asset
+    → POST /strategies (standard validation + persist)
+    → Active strategy (fully independent copy — no template back-link)
+```
+
+No new backend mutation endpoint is required. The template picker is a frontend-only UX enhancement that produces a standard SDF document for the existing creation flow.
 
 ### LLM strategy generation pathway (post-POC extension point)
 
@@ -1175,6 +1365,7 @@ Key findings to carry into implementation:
 - Stripe webhook events consumed by `platform/billing/`: `customer.subscription.created`,
   `customer.subscription.deleted`, `invoice.payment_failed`
 - Subscription status stored on `users` table; middleware checks status on protected routes
+- **Webhook idempotency** (NFR-REL-007): the webhook handler records each processed Stripe event ID in a `platform_stripe_events` table (`event_id VARCHAR PRIMARY KEY`, `event_type VARCHAR`, `processed_at TIMESTAMPTZ DEFAULT NOW()`). Before applying any state change, the handler checks if `event_id` already exists; if so, it returns HTTP 200 immediately without re-processing. Events older than 72 h are pruned by a daily cleanup query. This prevents duplicate subscription status transitions when Stripe retries webhook delivery. Migration: `010_stripe_idempotency.sql`
 
 ### LLM Provider Abstraction
 
@@ -1300,7 +1491,7 @@ For OTel Collector fan-out, the gateway exports to the collector at `http://otel
 - **LLM model**: Configurable via Agent Gateway LLM provider config (POC default: Anthropic claude-3-5-haiku); same provider abstraction as digest — not latency-sensitive, so gateway scheduling overhead is acceptable
 - **Token budget**: ≤ 100 output tokens; input = up to 10 news headlines (~400 tokens) + structured prompt (~100 tokens) = ~500 input tokens → total ~600 tokens per pulse per user
 - **Cost estimate** (POC default model: claude-3-5-haiku): ~600 tokens × $0.25/MTok (haiku input) + 100 × $1.25/MTok (haiku output) ≈ $0.0003/pulse/user; at 50 users × 6 pulses/day = ~$0.09/day. Costs vary by LLM provider; tracked via Langfuse per-model cost dashboards
-- **CryptoPanic quota impact**: sentiment pulse reuses the same news adapter as digest; at 6 pulses/day × 50 users × ~2 projects avg = 600 CryptoPanic calls/day — exceeds 50 req/day free tier; **POC decision**: (a) cache news responses at ai-service level with 30 min TTL (sentiment pulse doesn't need real-time freshness — this is the primary mitigation); (b) share cached news across users with overlapping watchlists (reduces unique API calls significantly for overlapping watchlists); (c) DuckDuckGo fallback on quota exhaustion (existing adapter from T054); (d) **for POC, implement a single "global" sentiment pulse** that fetches news once per asset (not per user), caches the result, and applies per-user watchlist filtering locally — this reduces CryptoPanic calls from O(users × projects) to O(distinct_projects) ≈ 20 calls per pulse = 120/day (within free tier with headroom); per-user custom sentiment weighting is deferred to post-POC
+- **CryptoPanic quota impact**: sentiment pulse reuses the same news adapter as digest; at 6 pulses/day × 50 users × ~2 projects avg = 600 CryptoPanic calls/day — exceeds 50 req/day free tier; **POC decision**: (a) cache news responses at ai-service level with 30 min TTL (sentiment pulse doesn't need real-time freshness — this is the primary mitigation); (b) share cached news across users with overlapping watchlists (reduces unique API calls significantly for overlapping watchlists); (c) DuckDuckGo fallback on quota exhaustion (existing adapter from T054); (d) **for POC, implement a single "global" sentiment pulse** that fetches news once per asset (not per user), caches the result, and applies per-user watchlist filtering locally — this reduces CryptoPanic calls from O(users × projects) to O(distinct_projects) ≈ 20 calls per pulse = 120/day (within free tier with headroom); per-user custom sentiment weighting is deferred to post-POC; (e) **combined daily budget across all features**: digest (1 run × ~20 projects = 20 calls) + sentiment (6 runs × 20 cached = 0–20 calls if cache expired, typically 0 due to 30 min TTL) + anomaly explanation (reuses cached news, 0 additional calls) = **≤ 40 calls/day in normal operation**, well within the 50/day free tier; the `QuotaTracker` (T053b) provides a hard ceiling with DuckDuckGo fallback as safety net; Prometheus counter `cryptopanic_quota_remaining` tracks daily headroom
 - **Structured output**: LLM prompt requests JSON `{ "score": "bullish|neutral|bearish", "confidence": 0.0-1.0, "summary": "..." }`; Agent Gateway skill parses the response and rejects malformed output (retries once); if both attempts fail, score is recorded as `neutral` with confidence `0.0`
 - **Sentiment trend**: over time, stored sentiment scores enable a trend line visible on the dashboard (post-POC UI enhancement); the API `GET /sentiment?limit=N` returns the most recent scores for chart rendering
 
@@ -1317,3 +1508,4 @@ For OTel Collector fan-out, the gateway exports to the collector at `http://otel
 - **Credential encryption**: AES-256-GCM with 12-byte random nonce; key derived from `EXCHANGE_ENCRYPTION_KEY` env var via HKDF-SHA256 (derive a 32-byte key from the env var to avoid depending on the env var being exactly 32 bytes); `crypto/aes` + `crypto/cipher` in Go stdlib — no external dependency required
 - **Connectivity test**: `GET /api/v3/ping` + `GET /api/v3/account` (verify API key has spot trading permission); called during `POST /exchange/connect` to validate credentials before storing; if test fails, return 400 with "Invalid API credentials or insufficient permissions"
 - **Circuit breaker**: `sony/gobreaker` wrapping all Binance API calls; open after 3 consecutive failures for 60 s; Prometheus gauge `exchange_circuit_breaker_state{exchange="binance"}`
+- **Per-user rate limiting** (NFR-SEC-008): Redis-based sliding window rate limiter (`exchange_ratelimit:{user_id}` key, TTL = 60 s, max = 10 calls/min configurable via `EXCHANGE_RATE_LIMIT_PER_USER_PER_MIN`). The trade executor checks the rate limit before calling the exchange adapter; if exceeded, the trade is deferred (logged as warning, not dropped — will execute on next signal fire if cooldown allows). This prevents a user with many strategies from monopolizing exchange API quota and protects against accidental strategy misconfiguration that could generate excessive trade volume. Prometheus counter: `exchange_rate_limit_exceeded_total{user_id}`

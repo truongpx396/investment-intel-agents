@@ -257,6 +257,48 @@ account connected.
 
 ---
 
+### User Story 10 — Strategy Templates by Investor Profile (Priority: P2)
+
+A new user visits the strategy creation page and sees a "Start from Template" option alongside the
+existing blank-strategy flow. They choose an investor profile (e.g., Conservative, Moderate,
+Aggressive, Income/DCA, Growth) and the system pre-populates a complete strategy with sensible
+signal rules for that profile. The user selects their target asset, reviews the pre-filled rules,
+optionally customises thresholds or adds/removes rules, and saves the strategy.
+
+**Why this priority**: The current strategy creation flow requires users to understand each signal
+type (RSI, MACD, Bollinger Bands, etc.) and configure them from scratch — a high barrier for
+non-technical investors. Templates dramatically lower the onboarding friction by translating
+familiar investor-personality language into concrete signal configurations.
+
+**Independent Test**: A new user can select the "Conservative" template, pick BTC as the asset,
+review the pre-populated rules (e.g., RSI < 30 buy-the-dip alert), save the strategy, and see it
+appear in their strategy list with all rules intact — without manually configuring any signal type
+parameters.
+
+**Acceptance Scenarios**:
+
+1. **Given** a logged-in user on the strategy creation page, **When** they choose "Start from
+   Template", **Then** they see a list of investor profiles with display name, description, and
+   a summary of included signal rules.
+2. **Given** a user selecting the "Aggressive — Momentum Breakout" template, **When** they pick
+   ETH as the target asset and save, **Then** a strategy is created with all pre-defined rules
+   (e.g., volume spike > 300%, MACD bullish crossover, Bollinger upper breach) and the asset set
+   to ETH.
+3. **Given** a user reviewing a template, **When** they edit a threshold (e.g., change RSI from
+   70 to 75), **Then** the modified value is saved — the template is a starting point, not a
+   constraint.
+4. **Given** a user reviewing a template, **When** they remove one of the pre-filled rules and
+   add a different signal type, **Then** the resulting strategy saves successfully with the
+   customised rule set.
+5. **Given** a user, **When** they choose "Start from Template" but no templates are available
+   (seed config error), **Then** a graceful fallback message is shown and the blank-strategy
+   flow remains accessible.
+6. **Given** a user creating a strategy from a template, **When** they save, **Then** the
+   created strategy is a fully independent copy — no link back to the template. Future template
+   changes do not affect existing strategies.
+
+---
+
 ### User Story 4 — Telegram Account Linking (Priority: P1)
 
 A user connects their Telegram account to the web app so that notifications and digests can be
@@ -335,9 +377,13 @@ strategy — without any notification or digest feature needing to be present.
   All live-mode strategies are automatically paused with a notification: "Strategies paused:
   exchange account disconnected". Paper-mode strategies are unaffected.
 - What happens when a user's exchange API key is revoked or expires? The system detects the
-  auth failure on the next trade attempt, marks the exchange link as broken, pauses all
-  live-mode strategies, and surfaces a re-link prompt in the web app (analogous to Telegram
-  broken-link detection per FR-019).
+  auth failure via two mechanisms: (1) **proactive**: a periodic exchange health probe (every
+  5 minutes for users with active live strategies) calls `TestConnectivity` on the exchange
+  adapter and marks the link as broken on auth failure; (2) **reactive**: on the next trade
+  attempt, the auth failure is detected and the link is marked as broken. In both cases, the
+  system pauses all live-mode strategies and surfaces a re-link prompt in the web app
+  (analogous to Telegram broken-link detection per FR-019). The proactive probe ensures
+  broken keys are detected even when no signals are firing.
 - What happens when a paper trade's fill price would result in a negative virtual balance? The
   system rejects the trade before execution, logs the reason, and includes a budget warning in
   the alert notification.
@@ -385,6 +431,9 @@ strategy — without any notification or digest feature needing to be present.
   14 hourly candles → compute RSI-14). All candle data is sourced from CryptoCompare
   `histominute`; no additional API is required. The default overbought threshold is 70 and the
   default oversold threshold is 30; both thresholds MUST be user-configurable per signal rule.
+  Each RSI signal rule uses a single `operator + threshold` pair (e.g., `above 70` for
+  overbought). To monitor both overbought (RSI > 70) and oversold (RSI < 30) conditions
+  simultaneously, the user creates **two separate signal rules** within the same strategy.
   
   **Percentage price change** signals MUST specify a `window_minutes` value from the following
   POC-allowed set: **5, 15, 60, 240, 1440** (representing 5 min, 15 min, 1 h, 4 h, 24 h). The
@@ -531,6 +580,42 @@ strategy — without any notification or digest feature needing to be present.
   MUST return the strategy in SDF format. Both endpoints are part of the REST API and require
   authentication.
 
+**Strategy Templates**
+
+- **FR-056**: The system MUST provide a curated set of **strategy templates** organised by
+  investor profile. Each template MUST be a complete, asset-agnostic SDF document (sans `asset`
+  field) with pre-configured signal rules appropriate for the investor profile. POC MUST include
+  at minimum the following five profiles: **Conservative** (low-risk, alert-only), **Moderate /
+  Balanced** (trend-following with optional paper trading), **Aggressive** (momentum breakout
+  with multiple signals), **Income / DCA** (dip-buying accumulation), and **Growth**
+  (multi-signal accumulation). Each template carries a `slug`, `display_name`, `description`,
+  `investor_profile` tag, and `risk_level` indicator (low / medium / high).
+- **FR-057**: Strategy templates MUST be defined in the seed configuration file
+  (`config/seed.yaml`) under a new `strategy_templates` section and validated against
+  `config/seed.schema.json` at boot (same fail-fast pattern as signal types and project seeds).
+  Each template's `sdf` block MUST conform to the Strategy Definition Format JSON Schema
+  (`contracts/strategy-definition.schema.json`), excluding the `asset` field which is supplied
+  by the user at creation time. Templates MUST NOT be stored in the database; they are
+  read-only configuration. Adding, editing, or removing a template requires only a seed file
+  update — no code changes.
+- **FR-058**: The system MUST expose a `GET /strategy-templates` endpoint that returns the
+  list of available templates from the in-memory seed configuration. The response MUST include
+  `slug`, `display_name`, `description`, `investor_profile`, `risk_level`, and a summary of
+  included signal rules (signal type + key parameters) for each template. This endpoint is
+  read-only, requires authentication, and MUST NOT support creation or mutation of templates.
+- **FR-059**: When a user creates a strategy from a template, the frontend MUST merge the
+  template's SDF with the user's chosen asset and submit it via the existing
+  `POST /strategies` endpoint. The resulting strategy MUST be a fully independent copy with
+  no persistent link to the source template. Template changes in `seed.yaml` MUST NOT affect
+  previously created strategies.
+- **FR-060**: The React strategy creation page MUST offer a "Start from Template" option
+  alongside the existing blank-strategy flow. The template picker MUST display all available
+  profiles with their descriptions and risk-level badges. After selecting a template, the user
+  MUST be able to: (a) choose the target asset from the signal-asset list, (b) review and
+  customise any pre-filled signal rules (add, remove, or edit), (c) optionally enable trade
+  execution, and (d) save the strategy. If template loading fails (seed config error), the UI
+  MUST fall back gracefully to the blank-strategy form with an informational message.
+
 **Anomaly Explanation**
 
 - **FR-029**: When a signal alert fires, the system MUST attempt to generate a short LLM
@@ -596,6 +681,11 @@ strategy — without any notification or digest feature needing to be present.
   (last traded price from the market data feed at signal-fire time), debit/credit the strategy's
   virtual budget accordingly, and persist the trade in `app_trade_orders`. No external exchange
   API call is made.
+- **FR-042a**: The web app portfolio page MUST display a persistent disclaimer banner above
+  paper-mode positions: "⚠️ Paper trading results are simulated and do not account for
+  spread, slippage, or exchange fees. Live trading performance will differ." The banner MUST
+  be visible whenever any paper-mode position exists and MUST NOT be dismissible. Paper trade
+  Telegram notifications MUST include "(simulated — no fees/slippage)" after the fill price.
 - **FR-043**: When a signal fires for a strategy with trade execution enabled in **live mode**,
   the system MUST place a **market order** on the user's connected exchange (Binance Spot for
   POC) via the exchange adapter interface. The order MUST respect the strategy's allocated budget.
@@ -616,7 +706,13 @@ strategy — without any notification or digest feature needing to be present.
 - **FR-047**: Users MUST be able to disconnect their exchange account at any time. Disconnecting
   MUST immediately pause all live-mode strategies (switching them to `paused` status) and send
   a Telegram notification: "⚠️ Exchange disconnected — all live strategies paused". Paper-mode
-  strategies MUST NOT be affected.
+  strategies MUST NOT be affected. **Race condition handling**: the disconnect handler MUST
+  acquire an advisory lock (`pg_advisory_xact_lock(user_id)`) before pausing strategies and
+  deleting credentials, to prevent a concurrent trade executor from reading credentials
+  mid-deletion. If a trade is already in-flight when disconnect is called, the disconnect
+  MUST wait for up to 10 s for the in-flight trade to complete (using a per-user mutex in
+  the trade executor) before deleting credentials. Trades initiated after the advisory lock
+  is acquired will see `exchange_link.status = broken` and skip execution.
 - **FR-048**: Users MUST be able to switch a strategy's trading mode between `paper` and `live`.
   Switching to `live` MUST require: (a) a connected exchange account, (b) a defined budget
   allocation, and (c) explicit user confirmation ("I understand this will use real funds").
@@ -665,9 +761,14 @@ strategy — without any notification or digest feature needing to be present.
 - **Strategy**: A named, user-owned configuration that targets a single asset and contains one
   or more signal rules; has an Active/Paused lifecycle status.
 - **Signal Rule**: A single condition within a strategy (e.g., "BTC RSI > 70"); belongs to
-  exactly one strategy; defines the signal type, asset, operator, threshold value (denominated
-  in the asset's `quote_currency` for price-based signals; dimensionless for RSI/volume/MACD/
-  Bollinger), optional
+  exactly one strategy; defines the signal type, asset, and type-specific parameters:
+  `operator` (required for price-threshold [`above`/`below`], pct-change [`above`/`below`],
+  RSI [`above`/`below`], and volume-spike [`above` only]; MUST be NULL for MACD-crossover and
+  Bollinger-Band-breach which use `cross_direction` and `band_direction` respectively),
+  `threshold` (required for price-threshold, pct-change, and RSI — denominated in the asset's
+  `quote_currency` for price-based signals or dimensionless for RSI; MUST be NULL for
+  volume-spike which uses `volume_threshold_pct`, and MUST be NULL for MACD-crossover and
+  Bollinger-Band-breach which are direction-based with no numeric threshold), optional
   `window_minutes` (required for percentage-change signals; POC-allowed values: 5, 15, 60, 240,
   1440 minutes), optional `candle_minutes` (required for RSI, volume-spike, MACD-crossover,
   and Bollinger-Band-breach signals; POC-allowed values: 5, 15, 60; default 15), optional
@@ -734,6 +835,13 @@ strategy — without any notification or digest feature needing to be present.
 - **NFR-SEC-004**: API rate limiting MUST be enforced via Traefik middleware; authenticated users
   MUST be limited to 120 requests/minute; unauthenticated paths (login, register) MUST be limited
   to 20 requests/minute.
+- **NFR-SEC-004a**: CORS MUST be configured on the Go backend to allow requests only from the
+  frontend origin (`CORS_ALLOWED_ORIGINS` env var; default `https://app.<domain>` for production,
+  `http://localhost:5173` for local dev). Allowed methods: `GET, POST, PUT, PATCH, DELETE,
+  OPTIONS`. Allowed headers: `Authorization, Content-Type, X-Request-ID`. Credentials: `true`
+  (for httpOnly cookie auth). The ai-service CORS is restricted to the internal Docker network
+  only (no public CORS needed). Traefik MUST NOT add duplicate CORS headers if the backend
+  already sets them (configure Traefik to pass through backend CORS headers).
 - **NFR-SEC-005**: Exchange API credentials (key + secret) MUST be encrypted at rest using
   AES-256-GCM with a server-side key derived from the `EXCHANGE_ENCRYPTION_KEY` environment
   variable. The encryption key MUST NOT be stored in the database or in application code.
@@ -746,6 +854,14 @@ strategy — without any notification or digest feature needing to be present.
 - **NFR-SEC-007**: Live trade execution endpoints (connect exchange, switch to live mode) MUST
   require re-authentication (password confirmation or Supabase MFA if enabled) before performing
   the action. This prevents accidental or unauthorized activation of real-money trading.
+- **NFR-SEC-008**: Exchange API calls MUST be rate-limited per user to prevent a single user's
+  strategies from consuming disproportionate exchange API quota. The system MUST enforce a
+  maximum of 10 exchange API calls per user per minute (configurable via
+  `EXCHANGE_RATE_LIMIT_PER_USER_PER_MIN` env var, default `10`). Rate limit state is tracked
+  in Redis (`exchange_ratelimit:{user_id}` key with TTL = 60 s). When the limit is reached,
+  subsequent trade executions for that user are deferred to the next evaluation tick (logged
+  as warning, not silently dropped). A Prometheus counter
+  `exchange_rate_limit_exceeded_total{user_id}` tracks throttled calls.
 
 ### Performance
 
@@ -755,7 +871,15 @@ strategy — without any notification or digest feature needing to be present.
 - **NFR-PERF-002**: React SPA pages MUST achieve LCP ≤ 2.5 s and CLS ≤ 0.1 on a median device
   profile when assets are served via Cloudflare CDN.
 - **NFR-PERF-003**: The signal evaluation loop MUST process all active strategies within each 30 s
-  tick with peak memory consumption not exceeding 256 MB.
+  tick with peak memory consumption not exceeding 256 MB. The single-pass evaluation model is
+  designed for POC scale (≤ 50 users, ≤ 200 active strategies, 2 signal assets). **Scalability
+  threshold**: if the number of active strategies exceeds 500 or signal assets exceeds 10, the
+  single-pass model may not complete within the 30 s tick budget due to sequential ai-service
+  calls and CryptoCompare API rate limits. Post-POC scaling options include: (a) fan-out
+  evaluation to worker goroutines per asset, (b) sharding strategies across multiple evaluator
+  instances by asset, (c) upgrading CryptoCompare to a paid tier with higher rate limits.
+  Phase 10 performance validation (T076) MUST include a load test simulating 500 active
+  strategies across 10 assets and document the observed tick completion time.
 - **NFR-PERF-004**: The Agent Gateway digest agent MUST complete per-user digest generation and delivery
   within 5 minutes of the scheduled cron trigger; peak memory consumption MUST NOT exceed 512 MB.
   Throughput SLA: the pipeline MUST complete all digests for ≤ 50 users × ≤ 10 watchlist projects
@@ -821,12 +945,23 @@ strategy — without any notification or digest feature needing to be present.
 - **NFR-REL-005**: Trade execution MUST be idempotent: for a given `signal_rule_id` +
   `triggered_at` + `strategy_id` combination, the system MUST NOT place more than one trade.
   The uniqueness constraint MUST be enforced at the database level (unique index) in addition
-  to application-level checks, to prevent duplicates under concurrent processing.
+  to application-level checks, to prevent duplicates under concurrent processing. The
+  `triggered_at` column MUST use `TIMESTAMPTZ` with microsecond resolution (PostgreSQL
+  default) and the signal evaluator MUST truncate `triggered_at` to the nearest second
+  (`date_trunc('second', now())`) before publishing to NATS — this ensures that minor
+  timing variations across goroutines within the same 30 s tick do not defeat the
+  idempotency guard.
 - **NFR-REL-006**: The exchange adapter's HTTP client MUST be protected by a circuit breaker
   (same pattern as NFR-REL-003). After 3 consecutive failures (timeout or 5xx), the circuit
   opens for 60 seconds; during this window, live trade execution is skipped (logged as warning,
   paper trades still execute). The circuit breaker state MUST be surfaced via a Prometheus gauge
   (`exchange_circuit_breaker_state{exchange="binance"}`).
+- **NFR-REL-007**: Stripe webhook processing MUST be idempotent. The system MUST track
+  processed Stripe event IDs (in a `platform_stripe_events` table or Redis set with 72 h TTL)
+  and skip duplicate events. Stripe may deliver the same webhook event multiple times (network
+  retries, infrastructure issues); the webhook handler MUST return 200 on duplicate events
+  without re-applying the state change. The idempotency check MUST occur before any database
+  writes.
 
 ---
 
@@ -892,7 +1027,13 @@ strategy — without any notification or digest feature needing to be present.
 - **A-010**: Paper trading uses the **last traded price** from the existing market data feed
   (CoinGecko / CryptoCompare) at signal-fire time as the simulated fill price. No order book
   simulation, slippage modelling, or maker/taker fee simulation is implemented for POC. This
-  means paper trading results will differ from live trading results.
+  means paper trading results will **systematically overstate performance** compared to live
+  trading because: (a) no spread cost (market data shows mid-price, live orders fill at
+  bid/ask), (b) no slippage (large orders move the order book), (c) no exchange fees
+  (Binance charges 0.1% maker/taker by default). The web app MUST display a persistent
+  disclaimer on the portfolio page for paper positions: "⚠️ Paper trading results are
+  simulated and do not account for spread, slippage, or exchange fees. Live trading
+  performance will differ." (See FR-042a).
 - **A-011**: For POC, only **Binance Spot** is supported as an exchange. The exchange adapter
   is implemented behind a provider interface (`ExchangeAdapter`) so that additional centralized
   exchanges (Coinbase, Kraken, Bybit) **and decentralized exchanges (Uniswap, PancakeSwap,
@@ -906,6 +1047,16 @@ strategy — without any notification or digest feature needing to be present.
 - **A-012**: Users are responsible for managing their own exchange API key permissions. The
   system documents the minimum required permissions (Spot trading read/write) but does NOT
   validate key permissions at link time beyond a test connectivity check.
+- **A-013 (Post-POC DEX Security Notes)**: When DEX adapter support is added, the following
+  security concerns MUST be addressed: (a) **private key custody**: the system MUST NOT store
+  user private keys; DEX integration MUST use WalletConnect or injected wallet patterns where
+  signing happens client-side; (b) **token approval scope**: ERC-20 approvals MUST be
+  limited to the exact trade amount (no unlimited approvals); (c) **front-running / MEV
+  protection**: DEX orders SHOULD use private mempools or MEV-protection RPC endpoints
+  (e.g., Flashbots Protect for Ethereum, Jito for Solana); (d) **smart contract risk**: the
+  system MUST validate target DEX router contract addresses against a known-good allow-list;
+  (e) **chain-specific gas estimation**: gas limits MUST include a safety margin (1.2×
+  estimated) to prevent failed transactions consuming gas without executing.
 
 ---
 
@@ -914,7 +1065,7 @@ strategy — without any notification or digest feature needing to be present.
 | Term | Definition |
 |------|------------|
 | **Strategy** | A named, user-owned configuration targeting a single asset from the curated project list (BTC and ETH for POC) that contains one or more signal rules and has an Active/Paused lifecycle. |
-| **Signal Rule** | A single condition within a strategy (e.g., "BTC RSI > 70") defining signal type, operator, threshold, optional `window_minutes` (required for % change signals; allowed POC values: 5, 15, 60, 240, 1440), optional `candle_minutes` (required for RSI, volume-spike, MACD-crossover, and Bollinger-Band-breach signals; allowed POC values: 5, 15, 60; default 15), optional `volume_threshold_pct` (required for volume-spike; default 200), optional `cross_direction` (required for MACD-crossover: bullish/bearish), and optional `band_direction` (required for Bollinger-Band-breach: upper/lower). |
+| **Signal Rule** | A single condition within a strategy (e.g., "BTC RSI > 70") defining signal type and type-specific parameters: `operator` (required for price-threshold [`above`/`below`], pct-change [`above`/`below`], RSI [`above`/`below`], volume-spike [`above` only]; NULL for MACD-crossover and Bollinger-Band-breach), `threshold` (required for price-threshold, pct-change, RSI; NULL for volume-spike, MACD-crossover, Bollinger-Band-breach), optional `window_minutes` (required for % change signals; allowed POC values: 5, 15, 60, 240, 1440), optional `candle_minutes` (required for RSI, volume-spike, MACD-crossover, and Bollinger-Band-breach signals; allowed POC values: 5, 15, 60; default 15), optional `volume_threshold_pct` (required for volume-spike; default 200), optional `cross_direction` (required for MACD-crossover: bullish/bearish), and optional `band_direction` (required for Bollinger-Band-breach: upper/lower). |
 | **Signal** | An event produced when a signal rule's condition evaluates to true during a polling tick. Signals are deterministic and rule-based (no ML). |
 | **Alert** | A persistent record created when a signal fires; carries trigger metadata, delivery status, and is displayed in the alert history view. |
 | **Notification** | The Telegram message delivered to a user when an alert is created. "Alert" = the data record; "Notification" = the delivery act. |
@@ -929,6 +1080,8 @@ strategy — without any notification or digest feature needing to be present.
 | **Linking** | The process of connecting a user's web-app account to their Telegram chat via a bot deep-link. |
 | **Strategy Definition Format (SDF)** | A portable JSON structure (with JSON Schema) that fully represents a strategy and its signal rules. Used as the wire format for `POST /strategies` and `GET /strategies/:id`, and the target format for future LLM-generated strategies ("text → SDF → save"). |
 | **Seed Configuration** | A declarative YAML file (`config/seed.yaml`) that externalises all business-level configuration: signal type definitions with parameter schemas, POC project seed data, and system tunables. Validated against `config/seed.schema.json` at boot. |
+| **Strategy Template** | A curated, asset-agnostic SDF document pre-configured with signal rules appropriate for a specific investor profile. Defined in `config/seed.yaml` under `strategy_templates`; read-only, not stored in DB. Users select a template, choose an asset, optionally customise rules, and save via the standard `POST /strategies` endpoint. The created strategy is a fully independent copy with no back-link to the template. |
+| **Investor Profile** | A classification tag on a strategy template indicating the intended trading personality: conservative (low-risk alerts), moderate (balanced trend-following), aggressive (momentum breakout), income (dip-buying accumulation), or growth (multi-signal accumulation). Used for template organisation and display; not stored on the created strategy. |
 | **Strategy Import** | Bulk creation of strategies via `POST /strategies/import` accepting an array of SDF documents; validates each against the JSON Schema and the same business rules as single creation. |
 | **Anomaly Explanation** | A short LLM-generated text (1–2 sentences) appended to an alert notification that describes the likely market event or news driving the signal condition. Produced at signal-fire time by fetching recent news + market context and passing them to the configured LLM provider (POC default: Anthropic claude-3-5-haiku). Persisted on the Alert record for display in alert history. |
 | **Sentiment Score** | A periodic classification of overall market sentiment (bullish / neutral / bearish) for a user's watchlisted assets, generated by the Agent Gateway sentiment-pulse skill. Carries a confidence value (0.0–1.0), a short rationale, and the count of news items analysed. Stored in `app_sentiment_scores`. |
