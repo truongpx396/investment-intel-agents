@@ -190,6 +190,76 @@
 
 ---
 
+## Responsive Layout
+
+### Approach
+
+**Mobile-first** — base styles target 375 px; wider layouts added progressively.
+
+### Breakpoints (Tailwind mapping)
+
+| Token | Width | Tailwind | Behaviour |
+|-------|-------|----------|-----------|
+| `mobile` | 375 px | _(default)_ | Single column; stacked cards; bottom nav; hamburger menu |
+| `tablet` | 768 px | `md:` | Two-column where appropriate; side nav or top nav; data tables visible |
+| `laptop` | 1024 px | `lg:` | Full sidebar nav; multi-column dashboards; side-by-side panels |
+| `desktop` | 1440 px | `xl:` | Max-width container (1280 px); comfortable whitespace |
+
+### Touch Targets
+
+- All interactive elements ≥ **44 × 44 px** on viewports < 768 px (WCAG 2.5.5 Level AAA)
+- Spacing between adjacent touch targets ≥ 8 px
+
+### Per-Page Responsive Behaviour
+
+| Page | Mobile (375 px) | Tablet (768 px) | Desktop (1024 px+) |
+|------|-----------------|-----------------|--------------------|
+| **Dashboard** (`/dashboard`) | Single-column strategy cards; quick stats stacked above | Two-column card grid; stats row | Three-column grid; sidebar quick stats |
+| **Strategy Create/Edit** | Single-column form; signal rule builder stacked; execution config below rules | Two-column: rules left, preview/execution right | Same as tablet with wider inputs |
+| **Template Picker** | Single-column scrollable card list | Two-column card grid | Three-column card grid |
+| **Alert History** (`/alerts`) | Stacked cards (no table); each card shows signal, time, status | Data table with horizontal scroll if needed | Full data table; filters in sidebar |
+| **Watchlist** (`/watchlist`) | Vertical list with swipe-to-remove | Two-column grid | Three-column grid with inline actions |
+| **Portfolio Dashboard** (`/portfolio`) | Stacked sections: summary → positions (cards) → trade history (cards) | Two-column: summary + positions left, trade history right | Full data tables; summary bar at top |
+| **Trade History** | Stacked cards per trade | Data table | Full data table with filters sidebar |
+| **Settings / Telegram** | Single-column | Single-column centred (max 600 px) | Same as tablet |
+| **Auth pages** | Centred card (90% width) | Centred card (max 420 px) | Same as tablet |
+| **Billing** | Single-column plan cards | Two-column plan cards | Three-column plan cards |
+| **Admin** | Stacked user cards | Data table | Full data table with search sidebar |
+
+### Data Table → Card Reflow Pattern
+
+On viewports < 768 px, all data tables (alert history, trade history, portfolio positions, admin user list) MUST reflow to **stacked cards**:
+
+```
+/* Desktop: <table> */        /* Mobile: stacked cards */
+┌──────┬──────┬──────┐        ┌──────────────────────┐
+│ Col1 │ Col2 │ Col3 │        │ Label1: Value1       │
+├──────┼──────┼──────┤   →    │ Label2: Value2       │
+│  A   │  B   │  C   │        │ Label3: Value3       │
+└──────┴──────┴──────┘        └──────────────────────┘
+```
+
+Implement via a shared `<ResponsiveTable>` component that renders `<table>` on `md:` and card list on mobile. Each column definition includes a `label` used as the card field label.
+
+### Navigation
+
+- **Mobile (< 768 px)**: Bottom tab bar (Dashboard, Alerts, Watchlist, Portfolio, More) + hamburger for secondary pages (Settings, Billing, Admin)
+- **Tablet (768 px+)**: Collapsible sidebar nav or top nav bar
+- **Desktop (1024 px+)**: Persistent sidebar nav
+
+### Component-Level Guidelines
+
+| Component | Mobile adaptation |
+|-----------|-------------------|
+| `Button` | Full-width (`w-full`) in forms; icon-only variant in toolbars |
+| `Card` | Full-width with reduced padding (`p-3` vs `p-6`) |
+| `Input` | `font-size: 16px` minimum (prevents iOS zoom on focus) |
+| `Modal` | Full-screen sheet (slides up from bottom) |
+| `Badge` | Same size; ensure touch target met when clickable |
+| `EmptyState` | Illustration scales down; text stays readable |
+
+---
+
 ## Pre-Delivery Checklist
 
 Before delivering any UI code, verify:
@@ -201,6 +271,11 @@ Before delivering any UI code, verify:
 - [ ] Light mode: text contrast 4.5:1 minimum
 - [ ] Focus states visible for keyboard navigation
 - [ ] `prefers-reduced-motion` respected
-- [ ] Responsive: 375px, 768px, 1024px, 1440px
+- [ ] Responsive: 375px, 768px, 1024px, 1440px — mobile-first (base → `md:` → `lg:` → `xl:`)
+- [ ] Touch targets ≥ 44×44 px on viewports < 768px
+- [ ] Data tables reflow to stacked cards on mobile (use `<ResponsiveTable>`)
+- [ ] `font-size: 16px` minimum on inputs (prevents iOS zoom)
+- [ ] Modals render as full-screen bottom sheets on mobile
 - [ ] No content hidden behind fixed navbars
 - [ ] No horizontal scroll on mobile
+- [ ] Navigation pattern matches breakpoint (bottom tabs / sidebar / persistent sidebar)
