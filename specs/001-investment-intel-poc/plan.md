@@ -209,7 +209,7 @@ A single authoritative reference for which service owns each concern. When in do
 | **Curated project registry** | **Python ai-service** | **Domain** | DB-backed; reads from `app_projects`; cached 5 min; `GET /projects` returns `{slug, display_name, symbol, coingecko_id, quote_currency, is_signal_asset}` |
 | Agent Gateway framework (cron, LLM, Telegram, HTTP fetch) | **Agent Gateway** | **Platform** | Domain-agnostic orchestration capabilities; swappable via [agent-gateway-abstraction.md](./agent-gateway-abstraction.md) |
 | Daily digest agent persona + crypto-digest skill | **Agent Gateway** | **Domain** | Investment-specific skill files in `agents/digest-agent/`; calls ai-service `GET /news/{slug}`, `POST /enrich/news`; uses LLM for summarisation |
-| Anomaly explanation enrichment | **Agent Gateway** | **Domain** | Investment-specific: on signal fire, fetches news + market context via ai-service, invokes LLM to explain the cause, returns explanation text to Go dispatcher for appending to alert; non-blocking (alert delivers without explanation on failure) |
+| Anomaly explanation enrichment | **Go backend + Python ai-service** | **Domain** | Investment-specific: on signal fire, Go dispatcher fetches news + market context via ai-service, calls ai-service `POST /explain/{asset}` for LLM explanation, appends text to alert; non-blocking (alert delivers without explanation on failure) |
 | Market sentiment pulse skill | **Agent Gateway** | **Domain** | Investment-specific skill in `agents/sentiment-agent/`; cron-scheduled (default every 4 h); fetches top N news items via ai-service, classifies sentiment via LLM, stores score via backend `/internal/sentiment` endpoint, optionally sends Telegram push |
 | **Trade execution (paper + live)** | **Go backend** | **Domain** | Investment-specific: on signal fire for trade-enabled strategy, executes paper trade (local computation) or live trade (exchange adapter API call); publishes `trade.executed.{asset}` to NATS; non-blocking relative to alert delivery |
 | **Portfolio position tracking** | **Go backend** | **Domain** | Investment-specific: maintains aggregate positions per strategy per mode; updates on every trade fill; provides portfolio dashboard data via REST API; `GET /portfolio` responses cached in Redis (`portfolio:{user_id}` key, TTL = 15 s) to reduce DB load from TanStack Query 30 s polling; cache invalidated on trade fill |
@@ -331,8 +331,7 @@ When a signal fires, the Go alert dispatcher enriches the alert with an LLM-gene
 3. **Explanation enrichment** (new step, non-blocking):
    - Dispatcher calls ai-service `GET /news/{asset}` to fetch recent news (reuses existing adapter)
    - Dispatcher calls ai-service `POST /indicators/{asset}` (or cached response) for 24 h market context
-   - Dispatcher sends news items + market context + signal metadata to the Agent Gateway anomaly agent via an internal HTTP call (`POST /internal/explain`), which invokes the configured LLM provider (≤ 150 tokens) to generate a 1–2 sentence explanation
-   - **Alternative (simpler)**: Go dispatcher calls `POST ai-service/explain/{asset}` — a new ai-service endpoint that wraps the LLM call directly via the `LLMProvider` interface, avoiding the Agent Gateway for this latency-sensitive path; the ai-service reads `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` from env vars
+   - Dispatcher calls ai-service `POST /explain/{asset}` — a dedicated ai-service endpoint that wraps the LLM call directly via the `LLMProvider` interface (≤ 150 tokens), avoiding the Agent Gateway for this latency-sensitive path; the ai-service reads `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` from env vars
 4. **Timeout guard**: the entire explanation step is wrapped in a 10 s context deadline; on timeout, the explanation is `NULL` and the alert proceeds without it
 5. **Persistence**: the explanation text is saved to `app_alerts.explanation` (new `TEXT` column, nullable)
 6. **Telegram delivery**: the notification message includes the explanation appended below the standard alert fields (or omitted if `NULL`)
@@ -797,12 +796,12 @@ decision record with interface definitions, provider abstraction patterns, and m
 
 ## Seed Configuration (FR-026)
 
-All business-level configuration is externalised into `config/seed.yaml`, validated against `config/seed.schema.json` at Go backend startup (fail-fast on invalid config). The seed file is NOT a database migration — it is a declarative description of the domain's configurable surface. The Go backend loads it once at startup and caches the parsed result in memory.
+All business-level configuration is externalised into `config/domain/investment/seed.yaml`, validated against `config/domain/investment/seed.schema.json` at Go backend startup (fail-fast on invalid config). The seed file is NOT a database migration — it is a declarative description of the domain's configurable surface. The Go backend loads it once at startup and caches the parsed result in memory.
 
 ### Seed file structure (illustrative excerpt)
 
 ```yaml
-# config/seed.yaml — business configuration, NOT secrets
+# config/domain/investment/seed.yaml — business configuration, NOT secrets
 version: "1"  # schema version; increment when breaking changes are made
 
 system:
@@ -1485,7 +1484,7 @@ For OTel Collector fan-out, the gateway exports to the collector at `http://otel
 - **Cost estimate** (POC default model: claude-3-5-haiku): ~450 tokens × $0.25/MTok (haiku input) + 150 × $1.25/MTok (haiku output) ≈ $0.0003/explanation; at 100 alerts/day = ~$0.03/day. Costs vary by LLM provider; tracked via Langfuse per-model cost dashboards
 - **Latency budget**: 10 s hard timeout; typical haiku response in 1–3 s; news fetch cached from recent digest/sentiment runs reduces cold-start
 - **Fallback strategy**: timeout → deliver alert without explanation; news fetch failure → use market-context-only prompt; LLM error → deliver alert without explanation; all failures logged + metriced
-- **ai-service endpoint**: `POST /explain/{asset}` — new endpoint in `ai-service/src/enrichment/explanation.py`; accepts `{ signal_type, threshold, current_value, news_items[], price_stats }`, calls LLM via `LLMProvider` interface, returns `{ explanation: string }`; cached at `explanation:{asset}:{signal_rule_id}:{minute}` with TTL = 55 s (prevents duplicate LLM calls if the same rule fires on consecutive ticks within cooldown edge cases)
+- **ai-service endpoint**: `POST /explain/{asset}` — new endpoint in `ai-service/src/domain/investment/enrichment/explanation.py`; accepts `{ signal_type, threshold, current_value, news_items[], price_stats }`, calls LLM via `LLMProvider` interface, returns `{ explanation: string }`; cached at `explanation:{asset}:{signal_rule_id}:{minute}` with TTL = 55 s (prevents duplicate LLM calls if the same rule fires on consecutive ticks within cooldown edge cases)
 
 ### Market Sentiment Pulse
 - **LLM model**: Configurable via Agent Gateway LLM provider config (POC default: Anthropic claude-3-5-haiku); same provider abstraction as digest — not latency-sensitive, so gateway scheduling overhead is acceptable
