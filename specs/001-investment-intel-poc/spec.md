@@ -14,6 +14,9 @@
 | Q3 | User registration model? | **Option A** — Open self-registration with email + password; full auth flow required (verification, password reset) |
 | Q4 | Alert history in web app? | **Option A** — Read-only alert history per strategy visible inside the web app |
 | Q5 | News data source for digest? | **Option B** — Separate third-party crypto news API, distinct from market data feed; provider selected at planning phase |
+| Q6 | Paper trading vs live-only trade execution? | **Option C** — Dual-mode: every user starts with a paper-trading account (virtual balance); users MAY optionally connect a live exchange account to execute real trades. Paper trading is always available and requires no exchange credentials |
+| Q7 | Budget management granularity? | **Option B** — Per-strategy budget allocation: users define a maximum capital allocation for each strategy that has trade execution enabled. The system enforces the budget ceiling before placing orders |
+| Q8 | Exchange integration scope for POC? | **Option A** — Single exchange adapter (Binance Spot) for POC; abstracted behind a provider interface so additional exchanges (Coinbase, Kraken, Bybit) can be added post-POC without code changes |
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -169,6 +172,91 @@ market sentiment. The sentiment score for each pulse is stored and retrievable v
 
 ---
 
+### User Story 8 — Trade Execution with Paper & Live Modes (Priority: P2)
+
+A user enables trade execution on a strategy to automatically place buy or sell orders when
+signal conditions fire. Before risking real money, the user can test any strategy in **paper
+mode** — the system simulates order placement against live market data using a virtual balance,
+recording all paper trades with realistic fill prices (last traded price at signal-fire time).
+When confident, the user connects their exchange account (Binance Spot for POC) and switches a
+strategy to **live mode** to execute real trades with a defined per-strategy budget.
+
+**Why this priority**: Trade execution transforms the platform from a passive alert system into
+an active trading assistant. Paper trading is essential to let users validate strategies
+risk-free before committing real capital, and it doubles as a system integration test.
+
+**Independent Test**: A user creates a BTC price-threshold strategy with trade execution enabled
+in paper mode and a $10,000 virtual budget. When the signal fires, a paper trade is recorded
+with the correct fill price, the virtual balance is debited, and the trade appears in the
+portfolio view — without any exchange account connected.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user with an active BTC strategy in paper mode with $10,000 virtual balance and
+   trade execution enabled (action: buy, size: 10% of budget), **When** the price-threshold
+   signal fires, **Then** a paper trade is recorded: buy BTC at the current market price for
+   $1,000 (10% of $10,000), virtual balance debited to $9,000, and a Telegram notification
+   includes "📝 Paper Trade Executed: Bought 0.0143 BTC @ $70,000".
+2. **Given** a user with a connected Binance account and a strategy in live mode with a $5,000
+   budget (action: buy, size: 20% of budget), **When** the signal fires, **Then** a real
+   market order is placed on Binance for $1,000, the order confirmation is persisted, the
+   budget is debited, and a Telegram notification includes "💰 Live Trade Executed: Bought
+   0.0143 BTC @ $70,012.50 on Binance".
+3. **Given** a strategy in live mode whose remaining budget ($200) is insufficient for the
+   configured trade size ($1,000), **When** the signal fires, **Then** no trade is placed, an
+   alert is still created and delivered, and the notification includes a warning:
+   "⚠️ Trade skipped: insufficient budget ($200 remaining, $1,000 required)".
+4. **Given** a strategy with trade execution enabled and the exchange API is unreachable,
+   **When** the signal fires, **Then** the alert is still delivered (non-blocking), the trade
+   attempt is logged as failed with the error reason, and the user sees a failed-trade
+   indicator in the web app.
+5. **Given** a user with a paper-mode strategy, **When** they switch the strategy to live mode,
+   **Then** the system requires: (a) a connected exchange account, (b) a defined budget, and
+   (c) explicit confirmation ("I understand this will use real funds"); paper trade history is
+   preserved and clearly labelled as paper.
+6. **Given** a user, **When** they set a per-strategy budget of $5,000, **Then** the system
+   enforces this ceiling across all trades for that strategy; the budget decreases on buys and
+   increases on sells (realised P&L); the user can adjust the budget at any time.
+
+---
+
+### User Story 9 — Portfolio Management (Priority: P3)
+
+A user views a consolidated portfolio dashboard showing all open positions (paper and live),
+realised and unrealised P&L, trade history, and per-strategy performance metrics. The portfolio
+view is the single source of truth for understanding how strategies are performing.
+
+**Why this priority**: Without portfolio visibility, users cannot evaluate whether their
+strategies are profitable. It closes the feedback loop from signal → trade → outcome.
+
+**Independent Test**: A user with 3 completed paper trades across 2 strategies can open the
+portfolio page and see: total unrealised P&L (calculated from current market price vs. entry
+price), per-strategy breakdown, and a chronological trade history — without any live exchange
+account connected.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user with 2 open BTC positions (one paper, one live) and 1 closed ETH position,
+   **When** they open the portfolio dashboard, **Then** they see: total portfolio value
+   (paper + live separated), unrealised P&L per open position (current price vs. entry price),
+   realised P&L for the closed position, and a summary row per strategy.
+2. **Given** a user viewing the portfolio, **When** the BTC price changes, **Then** the
+   unrealised P&L updates on the next page refresh (or via polling — real-time WebSocket is
+   out of scope for POC).
+3. **Given** a user with trades across multiple strategies, **When** they filter by a specific
+   strategy, **Then** only positions and trades for that strategy are shown.
+4. **Given** a user with a paper-mode strategy, **When** they view the trade history, **Then**
+   each paper trade is clearly labelled with a "📝 Paper" badge and live trades with a
+   "💰 Live" badge.
+5. **Given** a user with no trades, **When** they visit the portfolio page, **Then** a clear
+   empty-state message is shown: "Enable trade execution on a strategy to start building
+   your portfolio".
+6. **Given** a user, **When** they view per-strategy performance, **Then** they see: total
+   trades (paper/live), win rate (% of trades with positive P&L), total realised P&L, current
+   unrealised P&L, and budget utilisation (allocated vs. remaining).
+
+---
+
 ### User Story 4 — Telegram Account Linking (Priority: P1)
 
 A user connects their Telegram account to the web app so that notifications and digests can be
@@ -236,6 +324,27 @@ strategy — without any notification or digest feature needing to be present.
 - What happens when a user sets contradictory signal rules (e.g., "price above $X" AND "price
   below $X" simultaneously)? The form must validate and reject logically impossible combinations
   before saving.
+- What happens when a live trade is partially filled on the exchange? The system records the
+  partial fill as a completed trade for the filled quantity, debits the budget proportionally,
+  and logs the unfilled remainder as cancelled. The user sees the partial fill in trade history.
+- What happens when the exchange API returns an error after order submission (ambiguous state)?
+  The system marks the trade as "Pending Confirmation", queries the exchange order status on
+  the next evaluation tick (30 s), and reconciles. No duplicate orders are placed. The user is
+  notified of the ambiguous state via Telegram.
+- What happens when a user disconnects their exchange account while live strategies are active?
+  All live-mode strategies are automatically paused with a notification: "Strategies paused:
+  exchange account disconnected". Paper-mode strategies are unaffected.
+- What happens when a user's exchange API key is revoked or expires? The system detects the
+  auth failure on the next trade attempt, marks the exchange link as broken, pauses all
+  live-mode strategies, and surfaces a re-link prompt in the web app (analogous to Telegram
+  broken-link detection per FR-019).
+- What happens when a paper trade's fill price would result in a negative virtual balance? The
+  system rejects the trade before execution, logs the reason, and includes a budget warning in
+  the alert notification.
+- What happens when multiple signals fire simultaneously for the same strategy with trade
+  execution enabled? Only the first signal within the cooldown window produces a trade; subsequent
+  signals within the cooldown fire alerts but do not place additional orders (prevents accidental
+  double-execution).
 
 ---
 
@@ -472,6 +581,82 @@ strategy — without any notification or digest feature needing to be present.
 - **FR-039**: The number of news items fetched per pulse MUST be configurable via environment
   variable (`SENTIMENT_NEWS_LIMIT`, default: `10`).
 
+**Trade Execution**
+
+- **FR-040**: Users MUST be able to enable **trade execution** on any active strategy. Enabling
+  trade execution MUST require specifying: trading mode (`paper` or `live`), trade action
+  (`buy` or `sell`), trade size (percentage of the strategy's allocated budget per order), and a
+  per-strategy budget allocation (denominated in the strategy's `quote_currency`).
+- **FR-041**: Every new user account MUST be provisioned with a **paper-trading account** carrying
+  a configurable default virtual balance (env var `PAPER_TRADING_DEFAULT_BALANCE`, default:
+  `100000` denominated in USD). The paper-trading account requires no exchange credentials and is
+  always available.
+- **FR-042**: When a signal fires for a strategy with trade execution enabled in **paper mode**,
+  the system MUST simulate order placement: record a paper trade at the current market price
+  (last traded price from the market data feed at signal-fire time), debit/credit the strategy's
+  virtual budget accordingly, and persist the trade in `app_trade_orders`. No external exchange
+  API call is made.
+- **FR-043**: When a signal fires for a strategy with trade execution enabled in **live mode**,
+  the system MUST place a **market order** on the user's connected exchange (Binance Spot for
+  POC) via the exchange adapter interface. The order MUST respect the strategy's allocated budget.
+  Limit orders, stop-loss orders, and other order types are out of scope for POC.
+- **FR-044**: Before placing any trade (paper or live), the system MUST validate that the
+  strategy's remaining budget is sufficient for the configured trade size. If insufficient, the
+  trade MUST be skipped, the alert MUST still be created and delivered, and the notification
+  MUST include a warning: "⚠️ Trade skipped: insufficient budget ($X remaining, $Y required)".
+- **FR-045**: Trade execution MUST be **non-blocking** relative to alert delivery. If the exchange
+  API call fails or times out (10 s deadline), the alert MUST still be delivered. The failed trade
+  attempt MUST be logged with the error reason and persisted with status `Failed` in
+  `app_trade_orders`.
+- **FR-046**: Users MUST be able to connect a single exchange account (Binance Spot for POC)
+  via the web app by providing an API key and secret. Exchange credentials MUST be encrypted
+  at rest using AES-256-GCM with a server-side key derived from `EXCHANGE_ENCRYPTION_KEY` env
+  var (never stored in plaintext). Credential storage MUST follow the same provider-abstraction
+  pattern as other integrations (interface + adapter) to support additional exchanges post-POC.
+- **FR-047**: Users MUST be able to disconnect their exchange account at any time. Disconnecting
+  MUST immediately pause all live-mode strategies (switching them to `paused` status) and send
+  a Telegram notification: "⚠️ Exchange disconnected — all live strategies paused". Paper-mode
+  strategies MUST NOT be affected.
+- **FR-048**: Users MUST be able to switch a strategy's trading mode between `paper` and `live`.
+  Switching to `live` MUST require: (a) a connected exchange account, (b) a defined budget
+  allocation, and (c) explicit user confirmation ("I understand this will use real funds").
+  Switching to `paper` from `live` MUST preserve all live trade history. Existing positions from
+  the previous mode are NOT carried over — each mode maintains independent position tracking.
+- **FR-049**: Each trade order MUST be persisted in `app_trade_orders` with fields: `id`,
+  `user_id`, `strategy_id`, `signal_rule_id`, `alert_id` (FK to the triggering alert), `mode`
+  (paper/live), `side` (buy/sell), `asset`, `quantity`, `fill_price`, `quote_amount`,
+  `exchange_order_id` (nullable, only for live), `status` (enum: Pending, Filled,
+  PartiallyFilled, Cancelled, Failed), `error_reason` (nullable), `created_at`, `filled_at`.
+  RLS MUST scope to `user_id`.
+- **FR-050**: The signal evaluation cooldown (FR-008) MUST also apply to trade execution:
+  only the first signal within the cooldown window produces a trade; subsequent signals within
+  the window fire alerts but do NOT place additional orders.
+- **FR-051**: Trade execution events MUST be published to NATS JetStream on subject
+  `trade.executed.{asset}` with payload containing trade details. This enables future consumers
+  (analytics, risk monitoring) without coupling to the trade execution path.
+- **FR-052**: The Telegram notification for a fired signal on a trade-execution-enabled strategy
+  MUST include the trade outcome: "📝 Paper Trade Executed: Bought 0.0143 BTC @ $70,000" or
+  "💰 Live Trade Executed: Bought 0.0143 BTC @ $70,012.50 on Binance" or the skip/failure
+  reason.
+
+**Portfolio Management**
+
+- **FR-053**: The system MUST maintain portfolio positions in `app_portfolio_positions` with
+  fields: `id`, `user_id`, `strategy_id`, `asset`, `mode` (paper/live), `quantity`,
+  `avg_entry_price`, `current_value` (computed from latest market price), `unrealised_pnl`,
+  `realised_pnl`, `updated_at`. Positions MUST be updated on every trade fill. RLS MUST scope
+  to `user_id`.
+- **FR-054**: The web app MUST provide a **portfolio dashboard** page displaying: (a) total
+  portfolio value (paper and live separated), (b) per-position unrealised P&L (current market
+  price vs. avg entry price), (c) per-strategy performance summary (total trades, win rate,
+  realised P&L, unrealised P&L, budget utilisation), (d) chronological trade history with
+  filtering by strategy and mode (paper/live). Paper trades MUST show a "📝 Paper" badge; live
+  trades MUST show a "💰 Live" badge. Empty state MUST display: "Enable trade execution on a
+  strategy to start building your portfolio".
+- **FR-055**: Users MUST be able to adjust a strategy's budget allocation at any time. Increasing
+  budget MUST be immediate. Decreasing budget MUST be rejected if the new amount is less than the
+  value currently held in open positions for that strategy.
+
 ### Key Entities
 
 - **User**: Represents a registered account; holds authentication credentials, timezone
@@ -509,6 +694,23 @@ strategy — without any notification or digest feature needing to be present.
   generated by the Agent Gateway's sentiment-pulse skill. Each score carries a confidence value
   (0.0–1.0), a short LLM-generated rationale, and the count of news items analysed. Stored in
   `app_sentiment_scores` and optionally pushed to Telegram.
+- **Trading Account**: A user-owned account that tracks trading capabilities and balances. Every
+  user has a paper-trading account (virtual balance, no exchange credentials); optionally a live
+  exchange link. Stores `mode` (paper/live), `virtual_balance`, and references to the linked
+  exchange connection (if any).
+- **Trade Order**: A record of a single trade placed (or attempted) as a result of a signal
+  firing on a trade-execution-enabled strategy. Carries mode (paper/live), side (buy/sell),
+  quantity, fill price, exchange order ID (for live), status (Pending/Filled/PartiallyFilled/
+  Cancelled/Failed), and links to the originating alert, strategy, and signal rule.
+- **Portfolio Position**: An aggregate view of a user's holdings in a specific asset under a
+  specific strategy and mode. Tracks quantity, average entry price, unrealised P&L (computed
+  from current market price), and realised P&L. Updated on every trade fill event.
+- **Budget Allocation**: A per-strategy capital ceiling defined by the user. Denominated in the
+  strategy's quote currency. Debited on buys, credited on sells. The system enforces this
+  ceiling before placing any trade. Users may adjust the allocation at any time.
+- **Exchange Link**: A record associating a user with an external exchange account (Binance Spot
+  for POC). Stores the encrypted API key and secret (AES-256-GCM), connection status (active/
+  broken), and the exchange identifier. Used exclusively for live-mode trade execution.
 
 ---
 
@@ -520,13 +722,26 @@ strategy — without any notification or digest feature needing to be present.
   requests MUST receive a 401 response.
 - **NFR-SEC-002**: Row Level Security (RLS) MUST be enabled on all user-scoped application
   tables (`app_strategies`, `app_signal_rules`, `app_alerts`, `app_watchlist_entries`,
-  `app_users`, `app_sentiment_scores`); queries MUST be scoped to the authenticated user's `user_id`. Global reference
-  tables (`app_projects`) are public-read and do not require RLS.
+  `app_users`, `app_sentiment_scores`, `app_trade_orders`, `app_portfolio_positions`,
+  `app_exchange_links`, `app_trading_accounts`); queries MUST be scoped to the authenticated
+  user's `user_id`. Global reference tables (`app_projects`) are public-read and do not require RLS.
 - **NFR-SEC-003**: Stripe webhook endpoints MUST validate the `Stripe-Signature` header; requests
   failing signature verification MUST be rejected with a 400 response.
 - **NFR-SEC-004**: API rate limiting MUST be enforced via Traefik middleware; authenticated users
   MUST be limited to 120 requests/minute; unauthenticated paths (login, register) MUST be limited
   to 20 requests/minute.
+- **NFR-SEC-005**: Exchange API credentials (key + secret) MUST be encrypted at rest using
+  AES-256-GCM with a server-side key derived from the `EXCHANGE_ENCRYPTION_KEY` environment
+  variable. The encryption key MUST NOT be stored in the database or in application code.
+  Credentials MUST be decrypted only in-memory at the point of use (exchange API call) and
+  MUST NOT appear in logs, traces, or error messages.
+- **NFR-SEC-006**: The exchange credential storage table (`app_exchange_links`) MUST have RLS
+  enabled scoped to `user_id`. The encrypted key/secret columns MUST NOT be returned by any
+  API endpoint; only connection status (active/broken) and exchange name are exposed to the
+  frontend.
+- **NFR-SEC-007**: Live trade execution endpoints (connect exchange, switch to live mode) MUST
+  require re-authentication (password confirmation or Supabase MFA if enabled) before performing
+  the action. This prevents accidental or unauthorized activation of real-money trading.
 
 ### Performance
 
@@ -552,6 +767,11 @@ strategy — without any notification or digest feature needing to be present.
 - **NFR-PERF-007**: The Agent Gateway sentiment pulse skill MUST complete all user sentiment
   evaluations within 3 minutes of the scheduled cron trigger. Measurement uses the same OTLP
   traces and Prometheus metrics as the digest agent (NFR-PERF-004).
+- **NFR-PERF-008**: Live trade execution (exchange API call + order confirmation persistence)
+  MUST complete within 10 seconds of signal fire. If the exchange API does not respond within
+  the 10 s deadline, the trade MUST be marked as Failed and alert delivery MUST proceed.
+- **NFR-PERF-009**: Paper trade execution (simulate fill + persist) MUST complete within 100 ms
+  as it involves no external API call — only local computation and a database write.
 
 ### Observability
 
@@ -594,6 +814,15 @@ strategy — without any notification or digest feature needing to be present.
   the evaluation ticker, drain NATS connections (finish in-flight ACKs), close Redis and Postgres
   pools, and stop the HTTP server with a 15-second deadline. This ensures zero-downtime deploys
   and no lost NATS acknowledgements.
+- **NFR-REL-005**: Trade execution MUST be idempotent: for a given `signal_rule_id` +
+  `triggered_at` + `strategy_id` combination, the system MUST NOT place more than one trade.
+  The uniqueness constraint MUST be enforced at the database level (unique index) in addition
+  to application-level checks, to prevent duplicates under concurrent processing.
+- **NFR-REL-006**: The exchange adapter's HTTP client MUST be protected by a circuit breaker
+  (same pattern as NFR-REL-003). After 3 consecutive failures (timeout or 5xx), the circuit
+  opens for 60 seconds; during this window, live trade execution is skipped (logged as warning,
+  paper trades still execute). The circuit breaker state MUST be surfaced via a Prometheus gauge
+  (`exchange_circuit_breaker_state{exchange="binance"}`).
 
 ---
 
@@ -616,6 +845,16 @@ strategy — without any notification or digest feature needing to be present.
 - **SC-007**: REST API endpoints respond within 200 ms p95; React SPA pages achieve LCP ≤ 2.5 s
   and CLS ≤ 0.1 on a median device profile; all measurements taken under the expected POC load
   of ≤ 50 concurrent users.
+- **SC-008**: A user can enable paper trade execution on a strategy, trigger a signal, and see
+  the paper trade recorded with correct fill price and budget debit within 5 seconds of the
+  signal fire — without connecting any exchange account.
+- **SC-009**: A user can connect their Binance account, switch a strategy to live mode, trigger
+  a signal, and see a real market order placed and confirmed on Binance within 10 seconds of the
+  signal fire.
+- **SC-010**: The portfolio dashboard accurately reflects all open positions with unrealised P&L
+  calculated from the latest market price, updated within one polling interval (30 s).
+- **SC-011**: Zero duplicate trades across all test scenarios — the idempotency mechanism
+  (NFR-REL-005) prevents double execution even under concurrent signal processing.
 
 ### Assumptions
 
@@ -642,6 +881,20 @@ strategy — without any notification or digest feature needing to be present.
 - **A-008**: Alert records, digest records, and raw news items are retained indefinitely during
   the POC evaluation period; no automated purge or archival policy is implemented at this stage.
   Data retention policy will be revisited and formalised post-POC.
+- **A-009**: Exchange API (Binance Spot) is available and supports market order placement via
+  REST API with API key authentication. The Binance API rate limits (1200 req/min for orders)
+  are sufficient for POC scale (≤ 50 users). Binance testnet is available for integration
+  testing.
+- **A-010**: Paper trading uses the **last traded price** from the existing market data feed
+  (CoinGecko / CryptoCompare) at signal-fire time as the simulated fill price. No order book
+  simulation, slippage modelling, or maker/taker fee simulation is implemented for POC. This
+  means paper trading results will differ from live trading results.
+- **A-011**: For POC, only **Binance Spot** is supported as an exchange. The exchange adapter
+  is implemented behind a provider interface (`ExchangeAdapter`) so that Coinbase, Kraken,
+  Bybit, and other exchanges can be added post-POC without architectural changes.
+- **A-012**: Users are responsible for managing their own exchange API key permissions. The
+  system documents the minimum required permissions (Spot trading read/write) but does NOT
+  validate key permissions at link time beyond a test connectivity check.
 
 ---
 
@@ -669,3 +922,12 @@ strategy — without any notification or digest feature needing to be present.
 | **Anomaly Explanation** | A short LLM-generated text (1–2 sentences) appended to an alert notification that describes the likely market event or news driving the signal condition. Produced at signal-fire time by fetching recent news + market context and passing them to the configured LLM provider (POC default: Anthropic claude-3-5-haiku). Persisted on the Alert record for display in alert history. |
 | **Sentiment Score** | A periodic classification of overall market sentiment (bullish / neutral / bearish) for a user's watchlisted assets, generated by the Agent Gateway sentiment-pulse skill. Carries a confidence value (0.0–1.0), a short rationale, and the count of news items analysed. Stored in `app_sentiment_scores`. |
 | **Sentiment Pulse** | A scheduled Agent Gateway skill that runs at a configurable interval (default: every 4 hours), fetches recent news, classifies market sentiment via the LLM, stores the score, and optionally pushes a short Telegram summary to the user. |
+| **Paper Trading** | A simulated trading mode where the system records trades against live market data using a virtual balance, without placing real orders on any exchange. Every user has paper trading available by default. Fill prices use the last traded price at signal-fire time. |
+| **Live Trading** | Real-money trading mode where the system places actual market orders on a connected exchange (Binance Spot for POC) using the user's own funds. Requires a connected exchange account, a defined budget, and explicit user confirmation to activate. |
+| **Trading Account** | A user-owned entity that tracks trading mode (paper/live), virtual balance (for paper), and a reference to the connected exchange link (for live). Every user is automatically provisioned with a paper-trading account at registration. |
+| **Trade Order** | A record of a trade placed (or attempted) when a signal fires on a trade-execution-enabled strategy. Carries mode (paper/live), side (buy/sell), quantity, fill price, status (Pending/Filled/PartiallyFilled/Cancelled/Failed), and links to the originating alert, strategy, and signal rule. |
+| **Portfolio Position** | An aggregate record of a user's holdings in a specific asset under a specific strategy and mode. Tracks quantity, average entry price, unrealised P&L (from current market price), and realised P&L. Updated on every trade fill. |
+| **Budget Allocation** | A per-strategy capital ceiling defined by the user, denominated in the strategy's quote currency. The system enforces this ceiling before placing any trade. Debited on buys, credited on sells (realised P&L). Adjustable at any time. |
+| **Exchange Link** | A record associating a user with an external exchange account. Stores encrypted API credentials (AES-256-GCM), connection status, and exchange identifier. Used exclusively for live-mode trade execution. Binance Spot only for POC. |
+| **Exchange Adapter** | A provider-interface implementation that encapsulates all interaction with a specific exchange's API. Follows the same provider-abstraction pattern as market data and news adapters. Binance adapter is the sole POC implementation. |
+| **Fill Price** | The price at which a trade order is executed. For paper trades, this is the last traded price from the market data feed at signal-fire time. For live trades, this is the actual execution price reported by the exchange. |

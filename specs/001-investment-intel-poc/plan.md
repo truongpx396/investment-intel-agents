@@ -10,6 +10,9 @@ in the curated project list (BTC and ETH seeded for POC; additional tokens requi
 and receive real-time Telegram notifications when conditions fire (< 60 s SLA via 30 s polling).
 Users maintain a watchlist of crypto projects and receive a daily AI-summarised Telegram digest
 (LLM summarises raw news from a third-party crypto news API) by 09:00 in their configured timezone.
+Strategies can optionally enable **trade execution** — paper trading with virtual balance (always
+available) or live trading via Binance Spot (requires exchange account linking). A **portfolio
+dashboard** displays positions, unrealised P&L, and per-strategy performance across both modes.
 A React web app hosts all configuration UX; alert history is visible per strategy; billing and
 subscription management run through Stripe.
 
@@ -198,6 +201,13 @@ A single authoritative reference for which service owns each concern. When in do
 | Daily digest agent persona + crypto-digest skill | **Agent Gateway** | **Domain** | Investment-specific skill files in `agents/digest-agent/`; calls ai-service `GET /news/{slug}`, `POST /enrich/news`; uses LLM for summarisation |
 | Anomaly explanation enrichment | **Agent Gateway** | **Domain** | Investment-specific: on signal fire, fetches news + market context via ai-service, invokes LLM to explain the cause, returns explanation text to Go dispatcher for appending to alert; non-blocking (alert delivers without explanation on failure) |
 | Market sentiment pulse skill | **Agent Gateway** | **Domain** | Investment-specific skill in `agents/sentiment-agent/`; cron-scheduled (default every 4 h); fetches top N news items via ai-service, classifies sentiment via LLM, stores score via backend `/internal/sentiment` endpoint, optionally sends Telegram push |
+| **Trade execution (paper + live)** | **Go backend** | **Domain** | Investment-specific: on signal fire for trade-enabled strategy, executes paper trade (local computation) or live trade (exchange adapter API call); publishes `trade.executed.{asset}` to NATS; non-blocking relative to alert delivery |
+| **Portfolio position tracking** | **Go backend** | **Domain** | Investment-specific: maintains aggregate positions per strategy per mode; updates on every trade fill; provides portfolio dashboard data via REST API |
+| **Exchange API calls (Binance Spot)** | **Go backend** | **Domain** | Investment-specific: `domain/investment/exchange/interfaces.go` defines `ExchangeAdapter`; `domain/investment/exchange/binance/` implements it for POC; swap to Coinbase/Kraken/Bybit by adding a new adapter dir — trade executor unchanged |
+| **Exchange credential management** | **Go backend** | **Domain** | Investment-specific: AES-256-GCM encryption/decryption of exchange API keys; credentials stored in `app_exchange_links`; decrypted only in-memory at point of use |
+| **Budget enforcement** | **Go backend** | **Domain** | Investment-specific: validates per-strategy budget allocation before placing any trade; debits on buy, credits on sell (realised P&L) |
+| **Portfolio dashboard page** | **React SPA** | **Domain** | Investment-specific UI: positions, P&L, trade history, budget utilisation; paper/live mode separation |
+| **Exchange connection settings page** | **React SPA** | **Domain** | Investment-specific UI: connect/disconnect exchange account, show connection status |
 | Telegram digest delivery | **Agent Gateway** | **Platform** | Agent Gateway Telegram channel; same bot as Go alert dispatcher (single bot, see §Single Telegram Bot) |
 | UI component primitives (Button, Card, Input, etc.) | **React SPA** | **Platform** | Reusable design system with Storybook stories |
 | Auth, billing, settings, admin pages | **React SPA** | **Platform** | Domain-agnostic user-facing pages |
@@ -220,6 +230,7 @@ A single authoritative reference for which service owns each concern. When in do
 | Go backend (alert dispatcher) | Agent Gateway anomaly agent | Internal trigger (NATS → Go calls Agent Gateway HTTP or Agent Gateway subscribes to `signal.triggered.>`) | Internal |
 | Go backend | NATS JetStream | NATS protocol | NATS credentials |
 | Go backend | Telegram Bot API | HTTPS | `TELEGRAM_BOT_TOKEN` (shared single bot) |
+| Go backend (trade executor) | Binance Spot API | HTTPS REST (market orders) | User's encrypted exchange API key (AES-256-GCM, decrypted in-memory at call time) |
 | Agent Gateway | Telegram (digest + sentiment) | Agent Gateway Telegram channel | Same `TELEGRAM_BOT_TOKEN` configured as `AGENT_GATEWAY_TELEGRAM_BOT_TOKEN` |
 | Go backend | Supabase (Auth + DB) | HTTPS + postgres:// | Supabase service role key + RLS |
 | Go backend | Stripe | HTTPS | Stripe secret key + webhook signing secret |
@@ -349,6 +360,108 @@ A lightweight scheduled Agent Gateway skill that provides periodic market sentim
 
 ---
 
+### Trade Execution & Portfolio Management Architecture
+
+Trade execution is an **optional branch** on the signal-fire path: when a signal fires for a strategy with trade execution enabled, the system places a trade (paper or live) in addition to the standard alert flow. The trade execution step is **non-blocking** — alert delivery proceeds regardless of trade outcome.
+
+**Paper trade flow** (no external API call):
+
+1. **Signal fires** → Go evaluator publishes `signal.triggered.{asset}` to NATS (existing flow)
+2. **Alert dispatcher** consumes the event, persists the Alert record (existing flow)
+3. **Trade executor** (new step, non-blocking):
+   - Checks if strategy has `execution_enabled = TRUE` and `execution_mode = paper`
+   - Validates budget: `remaining_budget ≥ (trade_size_pct / 100) × budget_allocation`; if insufficient, skip trade and append budget warning to alert notification
+   - Fetches current market price (last traded price from existing market data feed at signal-fire time)
+   - Records paper trade in `app_trade_orders` with `mode=paper`, `fill_price=current_price`, `status=Filled`
+   - Debits strategy's virtual budget allocation
+   - Updates `app_portfolio_positions` (create or update: adjust quantity, recalculate avg entry price)
+   - Publishes `trade.executed.{asset}` to NATS `TRADES` stream
+4. **Alert notification** includes trade outcome: "📝 Paper Trade Executed: Bought 0.0143 BTC @ $70,000"
+
+**Live trade flow** (Binance Spot API call):
+
+1. **Signal fires** → Alert dispatcher flow (same as above)
+2. **Trade executor**:
+   - Checks `execution_mode = live` and user has connected exchange (`app_exchange_links.status = active`)
+   - Validates budget (same as paper)
+   - Decrypts exchange API credentials from `app_exchange_links` (AES-256-GCM, `EXCHANGE_ENCRYPTION_KEY` env var) — credentials exist only in-memory during the API call
+   - Places **market order** on Binance Spot via the `ExchangeAdapter` interface (10 s deadline per NFR-PERF-008)
+   - On success: persists trade in `app_trade_orders` with `mode=live`, `exchange_order_id`, `fill_price` (actual execution price from exchange), `status=Filled`
+   - On failure (timeout, API error): persists trade with `status=Failed`, `error_reason`; alert still delivered with failure reason: "⚠️ Live Trade Failed: Binance API timeout"
+   - Updates portfolio position and publishes `trade.executed.{asset}` to NATS
+3. **Alert notification** includes trade outcome: "💰 Live Trade Executed: Bought 0.0143 BTC @ $70,012.50 on Binance"
+
+**Exchange Adapter pattern** (provider abstraction — same pattern as auth, billing, notification):
+
+```go
+// domain/investment/exchange/interfaces.go
+type ExchangeAdapter interface {
+    PlaceMarketOrder(ctx context.Context, req MarketOrderRequest) (*OrderResult, error)
+    TestConnectivity(ctx context.Context) error
+    Name() string // e.g., "binance"
+}
+
+type MarketOrderRequest struct {
+    Symbol   string          // e.g., "BTCUSDT"
+    Side     OrderSide       // Buy or Sell
+    Quantity decimal.Decimal  // asset quantity
+}
+
+type OrderResult struct {
+    ExchangeOrderID string
+    FillPrice       decimal.Decimal
+    FilledQuantity  decimal.Decimal
+    Status          string
+    Timestamp       time.Time
+}
+```
+
+POC implements `exchange/binance/client.go` using Binance Spot REST API. Post-POC: add `exchange/coinbase/`, `exchange/kraken/`, etc. — trade executor unchanged.
+
+**Exchange credential encryption** (AES-256-GCM):
+- Server-side key derived from `EXCHANGE_ENCRYPTION_KEY` env var (never stored in DB or code)
+- `pkg/crypto/aes.go` provides `Encrypt(plaintext, key) → (ciphertext, nonce)` and `Decrypt(ciphertext, nonce, key) → plaintext`
+- Credentials encrypted at write time (`POST /exchange/connect`), decrypted only at call time (exchange API call)
+- Encrypted key/secret columns (`api_key_encrypted`, `api_secret_encrypted`, `encryption_nonce`) MUST NOT be returned by any API endpoint — only connection status and exchange name are exposed
+- On exchange disconnect: encrypted credentials are permanently deleted from `app_exchange_links` (hard delete, not soft)
+
+**Budget enforcement**:
+- Each trade-enabled strategy has a `budget_allocation` (denominated in quote currency, e.g., USD)
+- Paper-trading accounts have a `virtual_balance` (default from `PAPER_TRADING_DEFAULT_BALANCE` env var, default `100000`)
+- Before each trade: `required_amount = fill_price × quantity`; if `remaining_budget < required_amount`, skip trade
+- On buy: debit budget; on sell: credit budget with realised P&L
+- Budget increase: immediate; budget decrease: rejected if `new_amount < value_in_open_positions`
+
+**Trade idempotency** (NFR-REL-005):
+- Unique index on `(signal_rule_id, triggered_at, strategy_id)` in `app_trade_orders`
+- Application-level check before insert + database constraint as safety net
+- Prevents double execution under concurrent processing
+
+**Exchange adapter circuit breaker** (NFR-REL-006):
+- `sony/gobreaker` wrapping all exchange API calls
+- Open after 3 consecutive failures (timeout or 5xx) for 60 s
+- During open window: live trade execution skipped (logged as warning), paper trades still execute
+- Prometheus gauge: `exchange_circuit_breaker_state{exchange="binance"}` (0=closed, 1=half-open, 2=open)
+
+**Database changes**:
+- New table `app_trading_accounts` (migration `009_trading.sql`)
+- New table `app_trade_orders` (migration `009_trading.sql`)
+- New table `app_portfolio_positions` (migration `009_trading.sql`)
+- New table `app_exchange_links` (migration `009a_exchange_links.sql`)
+- New columns on `app_strategies`: `execution_enabled BOOLEAN DEFAULT FALSE`, `execution_mode` (enum: paper/live), `trade_action` (enum: buy/sell), `trade_size_pct NUMERIC`, `budget_allocation NUMERIC` (migration `009b_strategies_execution.sql`)
+- RLS enabled on all new tables, scoped to `user_id`
+
+**API endpoints** (Go backend):
+- `POST /api/v1/exchange/connect` — link exchange account (encrypted credential storage)
+- `DELETE /api/v1/exchange/disconnect` — unlink exchange account (hard-delete credentials, pause live strategies)
+- `GET /api/v1/exchange/status` — connection status (never returns credentials)
+- `PATCH /api/v1/strategies/:id/execution` — enable/disable trade execution, set mode/action/size/budget
+- `GET /api/v1/portfolio` — portfolio dashboard data (positions, P&L, budget utilisation)
+- `GET /api/v1/portfolio/trades?strategy_id=&mode=` — trade history (paginated, filterable)
+- `PATCH /api/v1/strategies/:id/budget` — adjust budget allocation
+
+---
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -436,6 +549,21 @@ investment-intel/
 │   │       │   ├── interfaces.go    # DataFeedProvider
 │   │       │   ├── coingecko.go
 │   │       │   └── cryptocompare.go
+│   │       ├── trading/             # Trade execution engine (paper + live)
+│   │       │   ├── executor.go      # TradeExecutor: orchestrates paper/live trade placement
+│   │       │   ├── budget.go        # BudgetManager: per-strategy budget enforcement
+│   │       │   └── handler.go       # /strategies/:id/execution, /strategies/:id/budget endpoints
+│   │       ├── portfolio/           # Portfolio position tracking & dashboard data
+│   │       │   ├── service.go       # PortfolioService: position updates on trade fill, P&L calc
+│   │       │   └── handler.go       # /portfolio, /portfolio/trades endpoints
+│   │       ├── exchange/            # Exchange adapter (interface + impl) — provider abstraction
+│   │       │   ├── interfaces.go    # ExchangeAdapter, MarketOrderRequest, OrderResult
+│   │       │   ├── handler.go       # /exchange/connect, /exchange/disconnect, /exchange/status
+│   │       │   ├── crypto.go        # AES-256-GCM encrypt/decrypt helpers for exchange credentials
+│   │       │   └── binance/         # ← SWAPPABLE: Binance Spot (implements ExchangeAdapter)
+│   │       │       ├── client.go    # BinanceAdapter — REST API client for market orders
+│   │       │       └── config.go    # Binance-specific config (base URL, testnet toggle)
+│   │       │       # Future: coinbase/, kraken/, bybit/ — same ExchangeAdapter interface
 │   │       └── config/              # Seed config loader (signal types, project seeds)
 │   │           └── seed.go
 │   │
@@ -560,7 +688,8 @@ investment-intel/
 │   │           │   ├── dashboard/   # Strategy list + quick stats
 │   │           │   ├── strategies/  # Strategy create/edit, signal rule builder
 │   │           │   ├── alerts/      # Alert history view
-│   │           │   └── watchlist/   # Watchlist management
+│   │           │   ├── watchlist/   # Watchlist management
+│   │           │   └── portfolio/   # Portfolio dashboard, trade history, exchange connection
 │   │           ├── components/      # Domain-specific components
 │   │           │   └── *.stories.tsx
 │   │           └── services/        # Domain API client hooks
@@ -761,7 +890,14 @@ A portable, self-describing JSON structure that fully represents a strategy and 
       "band_direction": "upper",
       "candle_minutes": 15
     }
-  ]
+  ],
+  "execution": {
+    "enabled": true,
+    "mode": "paper",
+    "action": "buy",
+    "trade_size_pct": 10,
+    "budget_allocation": 5000
+  }
 }
 ```
 
@@ -793,6 +929,30 @@ Each `$def` specifies exactly the parameters valid for that signal type (e.g., `
 - **Frontend** can auto-generate the form from the schema (show/hide fields per signal type)
 - **Backend** validates incoming requests against the schema before business-rule checks
 - **LLM** (post-POC) receives the schema as context and produces valid SDF documents from natural language
+
+### Execution block (optional)
+
+The SDF includes an optional `execution` object for trade execution configuration:
+
+```json
+{
+  "execution": {
+    "type": "object",
+    "properties": {
+      "enabled": { "type": "boolean", "default": false },
+      "mode": { "enum": ["paper", "live"], "default": "paper" },
+      "action": { "enum": ["buy", "sell"] },
+      "trade_size_pct": { "type": "number", "minimum": 0.1, "maximum": 100 },
+      "budget_allocation": { "type": "number", "minimum": 0 }
+    },
+    "required": ["enabled"],
+    "if": { "properties": { "enabled": { "const": true } } },
+    "then": { "required": ["mode", "action", "trade_size_pct", "budget_allocation"] }
+  }
+}
+```
+
+When `execution.enabled` is `false` or the `execution` key is absent, the strategy operates in alert-only mode (existing behaviour). When `enabled` is `true`, all execution fields are required. Switching `mode` from `paper` to `live` via `PUT /strategies/:id` requires a connected exchange account (enforced by business-rule validation, not schema).
 
 ### Wire format alignment
 
@@ -836,6 +996,15 @@ All indexes are created in the same migration as their parent table. Each index 
 | `app_watchlist_entries` | `idx_watchlist_user_id` | `user_id` | Watchlist page: `WHERE user_id = $1` |
 | `app_users` | `idx_users_email` | `email` | **UNIQUE** — enforced by Supabase Auth, but explicit index ensures fast lookup |
 | `app_users` | `idx_users_telegram_chat_id` | `telegram_chat_id` WHERE `telegram_chat_id IS NOT NULL` | Partial index for linking lookup |
+| `app_trade_orders` | `idx_trade_orders_user_created` | `user_id, created_at DESC` | Trade history page: reverse-chronological per user |
+| `app_trade_orders` | `idx_trade_orders_user_strategy` | `user_id, strategy_id, created_at DESC` | Trade history filtered by strategy |
+| `app_trade_orders` | `idx_trade_orders_idempotency` | `signal_rule_id, triggered_at, strategy_id` | **UNIQUE** — trade idempotency guard (NFR-REL-005); prevents duplicate trade execution |
+| `app_trade_orders` | `idx_trade_orders_alert_id` | `alert_id` | FK lookup: find trades by originating alert |
+| `app_portfolio_positions` | `idx_positions_user_id` | `user_id` | Portfolio dashboard: `WHERE user_id = $1` |
+| `app_portfolio_positions` | `idx_positions_user_strategy_mode` | `user_id, strategy_id, mode, asset` | **UNIQUE** — one position per user×strategy×mode×asset; upsert target |
+| `app_exchange_links` | `idx_exchange_links_user_id` | `user_id` | **UNIQUE** — one exchange link per user for POC (Binance only) |
+| `app_trading_accounts` | `idx_trading_accounts_user_id` | `user_id` | **UNIQUE** — one trading account per user |
+| `app_strategies` | `idx_strategies_user_execution` | `user_id, execution_enabled` WHERE `execution_enabled = TRUE` | Trade executor: find strategies with execution enabled for a user |
 
 ---
 
@@ -890,10 +1059,11 @@ Key findings to carry into implementation:
   combinations fit within a single 2000-candle call
 - Market data adapter must return the full rolling window, not just spot price
 - **Signal cooldown (anti-duplicate)**: before publishing to NATS, poller checks Redis key `cooldown:{signal_rule_id}` (default TTL 5 min, configurable via `SIGNAL_COOLDOWN_SECONDS`); if key present, suppress publish for this tick — prevents duplicate events when a condition stays true across multiple consecutive ticks and protects against alert spam
-- **NATS stream topology** (two streams — incompatible retention policies require separation):
+- **NATS stream topology** (three streams — incompatible retention policies require separation):
   - `SIGNALS` stream: `signal.triggered.>`, `WorkQueuePolicy` (auto-delete on ACK), `MaxAge 1h`, `FileStorage`, `Replicas 1`; consumer `alerts-dispatcher` with `MaxAckPending: 100` (flow-control ceiling)
   - `ALERT_QUEUE` stream: `alert.pending` + `alert.expired`, `LimitsPolicy`, `MaxAge 25h`, `FileStorage`, `Replicas 1`; consumer `alerts-redriver` with `MaxDeliver: 48`, `AckWait: 60s`
-  - Both streams initialised explicitly on backend startup via `platform/eventbus/` — do NOT rely on NATS auto-create defaults
+  - `TRADES` stream: `trade.executed.>`, `LimitsPolicy`, `MaxAge 72h`, `FileStorage`, `Replicas 1`; published by trade executor after each paper or live trade fill; enables future consumers (analytics, risk monitoring, portfolio rebalancing) without coupling to the trade execution path; no consumers defined for POC — stream serves as an audit log and extensibility point
+  - All three streams initialised explicitly on backend startup via `platform/eventbus/` — do NOT rely on NATS auto-create defaults
   - `FileStorage` requires a named Docker volume (`nats-data:/data`) in both local and production compose files
 - Docker compose defines two explicit networks: `public` (Traefik, frontend, backend) and `internal` (backend, ai-service, Agent Gateway, NATS, Redis, Postgres); ai-service is on `internal` only — never exposed via Traefik
 - On signal fire: publish `signal.triggered.{asset}` to `SIGNALS` stream (subject is asset-keyed; user isolation enforced by `user_id` in payload); `alerts-dispatcher` persists Alert and calls Telegram Bot API directly (not via the Agent Gateway — the gateway handles digest only; real-time alerts go direct for latency); if user has no linked Telegram, dispatcher sets `telegram_status=Pending` and publishes `alert.pending` to `ALERT_QUEUE`
@@ -1115,3 +1285,16 @@ For OTel Collector fan-out, the gateway exports to the collector at `http://otel
 - **CryptoPanic quota impact**: sentiment pulse reuses the same news adapter as digest; at 6 pulses/day × 50 users × ~2 projects avg = 600 CryptoPanic calls/day — exceeds 50 req/day free tier; **POC decision**: (a) cache news responses at ai-service level with 30 min TTL (sentiment pulse doesn't need real-time freshness — this is the primary mitigation); (b) share cached news across users with overlapping watchlists (reduces unique API calls significantly for overlapping watchlists); (c) DuckDuckGo fallback on quota exhaustion (existing adapter from T054); (d) **for POC, implement a single "global" sentiment pulse** that fetches news once per asset (not per user), caches the result, and applies per-user watchlist filtering locally — this reduces CryptoPanic calls from O(users × projects) to O(distinct_projects) ≈ 20 calls per pulse = 120/day (within free tier with headroom); per-user custom sentiment weighting is deferred to post-POC
 - **Structured output**: LLM prompt requests JSON `{ "score": "bullish|neutral|bearish", "confidence": 0.0-1.0, "summary": "..." }`; Agent Gateway skill parses the response and rejects malformed output (retries once); if both attempts fail, score is recorded as `neutral` with confidence `0.0`
 - **Sentiment trend**: over time, stored sentiment scores enable a trend line visible on the dashboard (post-POC UI enhancement); the API `GET /sentiment?limit=N` returns the most recent scores for chart rendering
+
+### Binance Spot Exchange Integration
+- **Selected for POC**: Binance Spot REST API v3 — market order placement via `POST /api/v3/order` with `type=MARKET`
+- **Authentication**: HMAC-SHA256 signed requests using user's API key + secret (stored encrypted in `app_exchange_links`)
+- **Rate limits**: 1200 request weight/min for orders; POC scale (≤ 50 users, ≤ 1 trade per signal fire per strategy) is well within limits
+- **Testnet**: `https://testnet.binance.vision` available for integration testing; configure via `BINANCE_BASE_URL` env var (default: `https://api.binance.com`; testnet: `https://testnet.binance.vision`)
+- **Go SDK options**: (a) `adshao/go-binance` — popular community SDK; (b) raw `net/http` with HMAC signing — simpler, fewer dependencies; **POC decision**: raw `net/http` with a thin adapter wrapper — keeps dependency surface minimal; the `ExchangeAdapter` interface is simple enough (one method: `PlaceMarketOrder`) that a full SDK is unnecessary
+- **Symbol format**: Binance uses concatenated pairs (e.g., `BTCUSDT`, `ETHUSDT`); the adapter maps `{asset_slug, quote_currency}` → Binance symbol (e.g., `btc` + `USD` → `BTCUSDT`); symbol mapping cached in-memory
+- **Order response**: Binance returns `fills` array with `price` and `qty` per fill; for market orders, the adapter computes VWAP (volume-weighted average price) across all fills as the `fill_price`
+- **Minimum order size**: Binance enforces `LOT_SIZE` and `MIN_NOTIONAL` filters per symbol; the adapter MUST fetch exchange info (`GET /api/v3/exchangeInfo?symbol=BTCUSDT`) at startup and cache symbol filters; reject trades below minimum before sending to exchange (clearer error message than Binance's error code)
+- **Credential encryption**: AES-256-GCM with 12-byte random nonce; key derived from `EXCHANGE_ENCRYPTION_KEY` env var via HKDF-SHA256 (derive a 32-byte key from the env var to avoid depending on the env var being exactly 32 bytes); `crypto/aes` + `crypto/cipher` in Go stdlib — no external dependency required
+- **Connectivity test**: `GET /api/v3/ping` + `GET /api/v3/account` (verify API key has spot trading permission); called during `POST /exchange/connect` to validate credentials before storing; if test fails, return 400 with "Invalid API credentials or insufficient permissions"
+- **Circuit breaker**: `sony/gobreaker` wrapping all Binance API calls; open after 3 consecutive failures for 60 s; Prometheus gauge `exchange_circuit_breaker_state{exchange="binance"}`
